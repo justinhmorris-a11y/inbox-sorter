@@ -99,7 +99,8 @@
       received: new Date(m.receivedDateTime),
       isRead: !!m.isRead,
       flagged: !!(m.flag && m.flag.flagStatus === 'flagged'),
-      importance: m.importance || 'normal'
+      importance: m.importance || 'normal',
+      folder: m.parentFolderId || null
     };
   }
 
@@ -144,7 +145,7 @@
 
   /** One message by id (any id format): who sent it, when, and its header evidence. */
   async function messageInfo(id) {
-    var m = await call('/me/messages/' + encodeURIComponent(id) + '?$select=id,from,sender,subject,receivedDateTime,isRead,flag,importance,internetMessageHeaders');
+    var m = await call('/me/messages/' + encodeURIComponent(id) + '?$select=id,from,sender,subject,receivedDateTime,isRead,flag,importance,parentFolderId,internetMessageHeaders');
     var out = mapMessage(m); out.headers = m.internetMessageHeaders || [];
     return out;
   }

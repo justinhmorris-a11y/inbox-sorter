@@ -11,7 +11,8 @@
     range: 'today', busy: false, me: null,
     messages: [], senders: {}, rows: [], assessments: {},
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
-    folders: [], selected: null, picked: null, pickedNote: '', pickAssess: {}, editing: null, domainFlag: {}, cardMore: false,
+    folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
+    editing: null, domainFlag: {}, cardMore: false,
     open: { suggest: true, file: true, stay: false }, openDest: {},
     ruleSnapshot: null, toastTimer: null
   };
@@ -91,14 +92,18 @@
     return [new Date(y, m, d - days + 1), new Date(y, m, d + 1)];
   }
   function rangeLabel() { return { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' }[S.range] || 'Today'; }
+  function scopeLabel() { return S.focus ? 'Highlighted' : rangeLabel(); }
 
   async function refresh() {
+    if (S.focus) { pickCache = {}; readHighlighted(); return; }
     if (S.busy) return;
     S.busy = true; $('refresh').classList.add('spin');
     try {
       var r = rangeDates(S.range);
       if (!S.messages.length) showLoading('Reading ' + rangeLabel().toLowerCase() + '...');
-      S.messages = await G.listInbox(r[0], r[1], function (n) { $('summary').textContent = 'Reading... ' + n + ' emails'; });
+      var listed = await G.listInbox(r[0], r[1], function (n) { if (!S.focus) $('summary').textContent = 'Reading... ' + n + ' emails'; });
+      if (S.focus) return;
+      S.messages = listed;
       S.senders = E.buildSenders(S.messages);
       await gatherEvidence();
       S.busy = false;
@@ -138,7 +143,7 @@
   // ------------------------------------------------------------------ rules
   function domainOf(address) { var p = E.addressParts(address); return p ? E.registrableDomain(p.domain) : null; }
   function canUseDomain(address) { var d = domainOf(address); return !!d && !PUBLIC_DOMAINS.test(d); }
-  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; var pk = (S.picked || []).filter(function (x) { return x.address === address; })[0]; if (pk) return pk.name; return address; }
+  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; return address; }
 
   function usesDomain(address) {
     if (S.domainFlag[address] !== undefined) return S.domainFlag[address];
@@ -234,9 +239,11 @@
       var ids = {}, codes = rows.map(function (r) { return r.dest; }).filter(function (c, idx, a) { return a.indexOf(c) === idx; });
       for (var c = 0; c < codes.length; c++) ids[codes[c]] = await folderIdFor(codes[c]);
       var result = await runMoves(rows.map(function (r) { return { id: r.msg.id, to: ids[r.dest] }; }), 'Filing');
-      G.local.set('is.undo.v1', { at: Date.now(), ids: result.moved });
+      var from = {}; rows.forEach(function (r) { if (r.msg.folder) from[r.msg.id] = r.msg.folder; });
+      G.local.set('is.undo.v1', { at: Date.now(), ids: result.moved, from: from });
       var gone = {}; result.moved.forEach(function (id) { gone[id] = true; });
       S.messages = S.messages.filter(function (m) { return !gone[m.id]; });
+      if (S.focus) S.focus = S.messages;
       S.senders = E.buildSenders(S.messages);
       S.busy = false;
       replan();
@@ -250,10 +257,10 @@
     if (!last || !last.ids || !last.ids.length || S.busy) return;
     S.busy = true; $('tidy').disabled = true; $('undo').disabled = true;
     try {
-      var result = await runMoves(last.ids.map(function (id) { return { id: id, to: 'inbox' }; }), 'Putting back');
+      var result = await runMoves(last.ids.map(function (id) { return { id: id, to: (last.from && last.from[id]) || 'inbox' }; }), 'Putting back');
       G.local.remove('is.undo.v1');
       S.busy = false;
-      toast(plural(result.moved.length, 'email') + ' back in the inbox', null);
+      toast(plural(result.moved.length, 'email') + ' put back', null);
       await refresh();
     } catch (err) { S.busy = false; setProgress(null); showError(err); }
     finally { S.busy = false; }
@@ -279,13 +286,13 @@
       pickDiag.last = res && res.status === 'succeeded' ? (res.value ? res.value.length : 0) + ' item(s): ' + (res.value || []).map(function (i) { return i.itemType || '?'; }).join(',') : 'failed: ' + (res && res.error && res.error.message);
       if (run !== pickRun) return;
       var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || String(i.itemType).toLowerCase() === 'message'; }) : [];
-      if (items.length < 2) { S.picked = null; S.pickedNote = ''; if (S.messages.length) render(); return; }
+      if (items.length < 2) { if (S.focus) { S.focus = null; S.messages = []; S.editing = null; refresh(); } return; }
       loadHighlighted(items, run);
     }
   }
   async function loadHighlighted(items, run) {
-    S.pickedNote = 'Looking at ' + items.length + ' highlighted emails...'; S.picked = null; render();
-    var i = 0, found = [];
+    if (!S.focus) { S.focus = []; S.editing = null; showLoading('Looking at ' + items.length + ' highlighted emails...'); }
+    var i = 0, found = [], seen = {};
     async function worker() {
       while (i < items.length) {
         var it = items[i++];
@@ -294,23 +301,19 @@
             var id = Office.context.mailbox.convertToRestId ? Office.context.mailbox.convertToRestId(it.itemId, Office.MailboxEnums.RestVersion.v2_0) : it.itemId;
             pickCache[it.itemId] = await G.messageInfo(id);
           }
-          found.push(pickCache[it.itemId]);
+          var m = pickCache[it.itemId];
+          if (!seen[m.id]) { seen[m.id] = true; found.push(m); }
         } catch (e) { /* not a message we can read (other mailbox, draft...) - skip */ }
       }
     }
     await Promise.all([worker(), worker(), worker(), worker()]);
     if (run !== pickRun) return;
-    var by = {}, evidenceChanged = false;
-    found.forEach(function (m) {
-      if (!E.addressParts(m.from)) return;
-      var s = by[m.from] || (by[m.from] = { address: m.from, name: m.fromName || m.from, total: 0, transN: 0, latest: m, oldest: m.received });
-      s.total++; if (m.received > s.latest.received) s.latest = m; if (m.received < s.oldest) s.oldest = m.received;
-      if (!S.ctx.evidence[m.from]) { S.ctx.evidence[m.from] = E.readHeaders(m.headers); evidenceChanged = true; }
-    });
+    var evidenceChanged = false;
+    found.forEach(function (m) { if (E.addressParts(m.from) && !S.ctx.evidence[m.from]) { S.ctx.evidence[m.from] = E.readHeaders(m.headers); evidenceChanged = true; } });
     if (evidenceChanged) G.local.set('is.evidence.v1', S.ctx.evidence);
-    S.picked = Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.total - x.total || x.name.localeCompare(y.name); });
-    S.pickedNote = found.length + ' highlighted email' + (found.length === 1 ? '' : 's') + ' · ' + S.picked.length + ' sender' + (S.picked.length === 1 ? '' : 's');
-    render();
+    found.sort(function (a, b) { return b.received - a.received; });
+    S.focus = found; S.messages = found; S.senders = E.buildSenders(found);
+    replan();
   }
 
   function watchSelection() {
@@ -344,23 +347,14 @@
       + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder or whole domain...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
   }
 
-  function pickedCard() {
-    S.pickAssess = {};
-    if (!S.picked) return '<div class="card"><p class="eyebrow">Highlighted emails</p><p class="state">' + esc(S.pickedNote) + '</p></div>';
-    var oldest = null, oldestRule = null;
-    var rows = S.picked.map(function (s) {
-      var rule = E.ruleFor(S.rules, s.address), as = S.assessments[s.address] || E.assessSender(s, S.ctx);
-      S.pickAssess[s.address] = as;
-      if (rule && rule.bucket !== 'I' && (!oldest || s.oldest < oldest)) { oldest = s.oldest; oldestRule = rule; }
-      return senderRow(s, { suggest: !rule && as.kind === 'suggest', as: as });
-    }).join('');
-    return '<div class="card picked"><p class="eyebrow">' + esc(S.pickedNote) + '</p>' + rows + rangeHint(oldestRule, oldest, true) + '</div>';
+  function focusCard() {
+    return '<div class="card"><p class="eyebrow">Highlighted emails</p><p class="state" style="margin:0">Showing only the ' + plural(S.focus.length, 'email') + ' you have highlighted. Tidy files just these. Click a single email to go back to ' + esc(rangeLabel().toLowerCase()) + '.</p></div>';
   }
 
   function diagLine() { return window.SORTER_MOCK ? '' : '<p style="margin:6px 0 0;font-size:11px;opacity:.6">highlight check: ' + esc(pickDiag.last) + ' · events ' + pickDiag.events + ' · handler ' + esc(pickDiag.handler || 'pending') + ' · ' + esc(location.search || 'old install') + '</p>'; }
 
   function selectedCard() {
-    if (S.picked || S.pickedNote) return pickedCard();
+    if (S.focus) return focusCard();
     if (!S.selected) return '';
     var a = S.selected.address, rule = E.ruleFor(S.rules, a), state;
     if (rule) state = (rule.bucket === 'I' ? 'Your rule: always keep in the inbox' : 'Your rule: always ' + (rule.bucket === 'D' ? 'delete' : 'file under ' + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '');
@@ -375,20 +369,20 @@
   }
 
   // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
-  function rangeHint(rule, when, many) {
+  function rangeHint(rule, when) {
     if (!rule || rule.bucket === 'I' || !when || isNaN(when)) return '';
     var r = rangeDates(S.range);
     if (when >= r[0] && when < r[1]) return '';
     var want = E.rangeContaining(when), labels = { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' };
     var day = (Date.now() - when) < 6 * 86400000 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    if (!want) return '<p class="hint">' + (many ? 'The oldest of these is from ' : 'This email is from ') + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
-    return '<p class="hint">' + (many ? 'The oldest of these is from ' : 'This email is from ') + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
+    if (!want) return '<p class="hint">This email is from ' + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
+    return '<p class="hint">This email is from ' + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
       + '<button class="link" data-act="range" data-range="' + want + '">Show ' + esc(labels[want]) + '</button></p>';
   }
 
   function senderRow(s, opts) {
     opts = opts || {};
-    var a = s.address, rule = E.ruleFor(S.rules, a), as = opts.as || S.assessments[a] || {};
+    var a = s.address, rule = E.ruleFor(S.rules, a), as = S.assessments[a] || {};
     var acts = '';
     if (opts.suggest) {
       acts += '<button class="round yes" data-act="approve" title="Approve: always ' + esc(E.bucketName(as.bucket)) + '" aria-label="Approve">' + ICON.check + '</button>'
@@ -437,7 +431,7 @@
     var staying = S.rows.filter(function (r) { return r.dest === 'I'; });
 
     if (!S.messages.length) {
-      html += '<div class="state-box"><h2>Nothing here</h2><p>No email in the inbox for ' + esc(rangeLabel().toLowerCase()) + '.</p></div>';
+      html += '<div class="state-box"><h2>Nothing here</h2><p>' + (S.focus ? 'None of the highlighted emails could be read.' : 'No email in the inbox for ' + esc(rangeLabel().toLowerCase()) + '.') + '</p></div>';
     } else {
       // 1. suggestions
       if (sug.length) {
@@ -477,7 +471,7 @@
     main.innerHTML = html;
     main.scrollTop = scroll;
 
-    $('summary').textContent = rangeLabel() + ' · ' + plural(S.messages.length, 'email') + ' · ' + filing.length + ' to file' + (sug.length ? ' · ' + plural(sug.length, 'suggestion') : '');
+    $('summary').textContent = scopeLabel() + ' · ' + plural(S.messages.length, 'email') + ' · ' + filing.length + ' to file' + (sug.length ? ' · ' + plural(sug.length, 'suggestion') : '');
     $('tidy').disabled = !filing.length || S.busy;
     $('tidy').textContent = filing.length ? 'Tidy now · file ' + plural(filing.length, 'email') : 'Tidy now';
     var last = G.local.get('is.undo.v1');
@@ -508,7 +502,7 @@
   function wire() {
     if (wired) return;
     wired = true;
-    $('range').addEventListener('change', function (e) { S.range = e.target.value; S.messages = []; S.editing = null; refresh(); });
+    $('range').addEventListener('change', function (e) { S.range = e.target.value; S.focus = null; S.messages = []; S.editing = null; refresh(); });
     $('refresh').addEventListener('click', function () { refresh(); });
     $('tidy').addEventListener('click', tidy);
     $('undo').addEventListener('click', undo);
@@ -522,7 +516,7 @@
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
       else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest !== 'I'; }).length <= 15; S.openDest[c] = !cur; render(); }
-      else if (act === 'approve') { setRule(address, (S.assessments[address] || S.pickAssess[address]).bucket); }
+      else if (act === 'approve') { setRule(address, S.assessments[address].bucket); }
       else if (act === 'reject') { setRule(address, 'I'); }
       else if (act === 'approve-all') { approveAll(); }
       else if (act === 'edit') { S.editing = S.editing === address ? null : address; render(); }
