@@ -100,6 +100,13 @@ const assert = require('assert');
   await multi.waitForSelector('.card:not(.picked)');
   console.log('highlighted emails: card shown, rule set, back to single');
 
+  // Outlook refusing the highlighted-emails call (older manifest) must not break the pane
+  const refused = await browser.newPage();
+  await refused.route('**/appsforoffice.microsoft.com/**', r => r.fulfill({ status: 200, contentType: 'text/javascript', body: '' }));
+  await refused.goto('http://localhost:8123/taskpane.html?mock=1&noselect=1');
+  await refused.waitForSelector('.section', { timeout: 10000 });
+  console.log('highlight call refused: pane still loads');
+
   console.log('page errors:', errors.length ? errors : 'none');
   await browser.close(); server.close();
 })().catch(e => { console.error('TEST FAILED', e); process.exit(1); });

@@ -16,7 +16,7 @@
       requirements: { isSetSupported: function () { return true; } },
       roamingSettings: { get: function (k) { return settings[k]; }, set: function (k, v) { settings[k] = v; }, saveAsync: function (cb) { cb({ status: 'succeeded' }); } },
       mailbox: { item: item, addHandlerAsync: function (type, fn) { handlers[type] = fn; }, convertToRestId: function (id) { return id; },
-        getSelectedItemsAsync: function (cb) { cb({ status: 'succeeded', value: highlighted.map(function (id) { return { itemId: id, itemType: 'message' }; }) }); } }
+        getSelectedItemsAsync: function (cb) { if (/[?&]noselect=1/.test(global.location.search)) throw new Error("Elevated permission is required to call the method: 'getSelectedItemsAsync'."); cb({ status: 'succeeded', value: highlighted.map(function (id) { return { itemId: id, itemType: 'message' }; }) }); } }
     }
   };
 

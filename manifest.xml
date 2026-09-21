@@ -5,7 +5,7 @@
            xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
            xsi:type="MailApp">
   <Id>dfbc086d-afba-4fca-bcf4-c3893934c736</Id>
-  <Version>1.1.0.0</Version>
+  <Version>1.2.0.0</Version>
   <ProviderName>Inbox Sorter</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="Inbox Sorter"/>
@@ -32,7 +32,7 @@
       </DesktopSettings>
     </Form>
   </FormSettings>
-  <Permissions>ReadItem</Permissions>
+  <Permissions>ReadWriteMailbox</Permissions>
   <Rule xsi:type="RuleCollection" Mode="Or">
     <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
   </Rule>

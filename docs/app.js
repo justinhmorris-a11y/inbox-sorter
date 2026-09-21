@@ -274,12 +274,13 @@
   function readHighlighted() {
     var mb = Office.context.mailbox, run = ++pickRun;
     if (!mb.getSelectedItemsAsync) return;
-    mb.getSelectedItemsAsync(function (res) {
+    try { mb.getSelectedItemsAsync(onItems); } catch (e) { console.warn('highlighted emails unavailable', e); }   // older manifest / Outlook: single selection still works
+    function onItems(res) {
       if (run !== pickRun) return;
       var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || i.itemType === 'message'; }) : [];
       if (items.length < 2) { if (S.picked || S.pickedNote) { S.picked = null; S.pickedNote = ''; render(); } return; }
       loadHighlighted(items, run);
-    });
+    }
   }
   async function loadHighlighted(items, run) {
     S.pickedNote = 'Looking at ' + items.length + ' highlighted emails...'; S.picked = null; render();
