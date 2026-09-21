@@ -75,4 +75,15 @@ assert.strictEqual(E.registrableDomain('email.sportsdirect.com'), 'sportsdirect.
 assert.strictEqual(E.registrableDomain('mail.shop.co.uk'), 'shop.co.uk');
 assert.strictEqual(E.registrableDomain('amazon.co.uk'), 'amazon.co.uk');
 assert.deepStrictEqual(E.readHeaders([{ name: 'List-Unsubscribe', value: '<x>' }, { name: 'Auto-Submitted', value: 'no' }]), { unsub: true, bulk: false, auto: false, esp: false });
+// which pane range reaches a given email (drives the 'outside the dates shown' hint)
+const noon = new Date(2026, 8, 21, 12, 0);
+assert.strictEqual(E.rangeContaining(new Date(2026, 8, 21, 0, 5), noon), 'today');
+assert.strictEqual(E.rangeContaining(new Date(2026, 8, 20, 23, 59), noon), 'yesterday');
+assert.strictEqual(E.rangeContaining(new Date(2026, 8, 15, 9, 0), noon), '7');
+assert.strictEqual(E.rangeContaining(new Date(2026, 8, 14, 9, 0), noon), '30');
+assert.strictEqual(E.rangeContaining(new Date(2026, 7, 23, 9, 0), noon), '30');
+assert.strictEqual(E.rangeContaining(new Date(2026, 7, 22, 9, 0), noon), null);
+assert.strictEqual(E.rangeContaining(new Date(2026, 8, 22, 9, 0), noon), null);
+assert.strictEqual(E.rangeContaining('nonsense', noon), null);
+
 console.log('engine tests passed:', p.rows.length, 'messages planned');

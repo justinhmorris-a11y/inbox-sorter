@@ -76,7 +76,14 @@ const assert = require('assert');
 
   const dark = await open('dark');
   await dark.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
+  // the open email is 3 days old: once it has a rule, the card explains why Tidy cannot reach it and offers the right range
+  const hint = (await dark.textContent('.card .hint')).replace(/\s+/g, ' ');
+  assert.ok(/outside "Today"/.test(hint) && /Show Last 7 days/.test(hint), 'range hint shown: ' + hint);
   await dark.screenshot({ path: path.join(shots, '5-dark.png') });
+  await dark.click('.card .hint [data-act="range"]');
+  await dark.waitForFunction(() => /^Last 7 days/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
+  assert.strictEqual(await dark.$('.card .hint'), null, 'hint gone once the range covers the email');
+  console.log('range hint: shown, link switched to', await dark.inputValue('#range'));
 
   console.log('page errors:', errors.length ? errors : 'none');
   await browser.close(); server.close();

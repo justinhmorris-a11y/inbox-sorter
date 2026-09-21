@@ -265,7 +265,7 @@
       S.cardMore = false;
       var item = Office.context.mailbox.item;
       if (item && item.from && item.from.emailAddress) {
-        S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '' };
+        S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '', received: item.dateTimeCreated ? new Date(item.dateTimeCreated) : null };
       } else { S.selected = null; }
     } catch (e) { S.selected = null; }
   }
@@ -310,7 +310,20 @@
       else state = 'No rule yet - stays in the inbox';
     }
     return '<div class="card"><p class="eyebrow">Selected email</p><div class="who">' + esc(S.selected.name || a) + '</div><div class="addr">' + esc(a) + '</div>'
-      + '<p class="state">' + esc(state) + '</p>' + editorHtml(a, true) + '</div>';
+      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule) + editorHtml(a, true) + '</div>';
+  }
+
+  // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
+  function rangeHint(rule) {
+    var when = S.selected.received;
+    if (!rule || rule.bucket === 'I' || !when || isNaN(when)) return '';
+    var r = rangeDates(S.range);
+    if (when >= r[0] && when < r[1]) return '';
+    var want = E.rangeContaining(when), labels = { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' };
+    var day = (Date.now() - when) < 6 * 86400000 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (!want) return '<p class="hint">This email is from ' + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
+    return '<p class="hint">This email is from ' + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
+      + '<button class="link" data-act="range" data-range="' + want + '">Show ' + esc(labels[want]) + '</button></p>';
   }
 
   function senderRow(s, opts) {
@@ -453,6 +466,7 @@
       else if (act === 'clear') { clearRule(address); }
       else if (act === 'keep') { snapshot(); S.rules.keep[id] = Date.now(); afterRuleChange('Keeping that one in the inbox'); }
       else if (act === 'unkeep') { snapshot(); delete S.rules.keep[id]; afterRuleChange('It will be filed on the next tidy'); }
+      else if (act === 'range') { var sel = $('range'); sel.value = el.getAttribute('data-range'); sel.dispatchEvent(new Event('change')); }
       else if (act === 'retry') { boot().catch(showError); }
     });
 

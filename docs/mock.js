@@ -6,7 +6,7 @@
   global.SORTER_MOCK = true;
 
   var settings = {};
-  var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50' };
+  var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50', dateTimeCreated: new Date(Date.now() - 3 * 86400000) };
   global.Office = {
     onReady: function (cb) { setTimeout(cb, 0); return Promise.resolve(); },
     EventType: { ItemChanged: 'itemChanged' },

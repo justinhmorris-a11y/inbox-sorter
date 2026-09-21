@@ -214,7 +214,17 @@
     return { rows: rows, assessments: assessments };
   }
 
+  // Smallest pane range ('today', 'yesterday', '7', '30') whose dates include `date`; null if older (or in the future).
+  function rangeContaining(date, now) {
+    var n = now || new Date(), d = new Date(date);
+    if (isNaN(d)) return null;
+    var days = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+    if (days < 0) return null;
+    return days === 0 ? 'today' : days === 1 ? 'yesterday' : days < 7 ? '7' : days < 30 ? '30' : null;
+  }
+
   return {
+    rangeContaining: rangeContaining,
     BUCKETS: BUCKETS, bucketName: bucketName, addressParts: addressParts, registrableDomain: registrableDomain,
     emptyRules: emptyRules, normaliseRules: normaliseRules, ruleFor: ruleFor, readHeaders: readHeaders,
     buildSenders: buildSenders, assessSender: assessSender, plan: plan,
