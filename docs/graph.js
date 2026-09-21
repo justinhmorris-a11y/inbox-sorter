@@ -142,6 +142,13 @@
     return m.internetMessageHeaders || [];
   }
 
+  /** One message by id (any id format): who sent it, when, and its header evidence. */
+  async function messageInfo(id) {
+    var m = await call('/me/messages/' + encodeURIComponent(id) + '?$select=id,from,sender,subject,receivedDateTime,isRead,flag,importance,internetMessageHeaders');
+    var out = mapMessage(m); out.headers = m.internetMessageHeaders || [];
+    return out;
+  }
+
   async function moveMessage(id, destinationId, immutable) {
     return call('/me/messages/' + encodeURIComponent(id) + '/move', { method: 'POST', body: { destinationId: destinationId }, immutable: immutable });
   }
@@ -193,7 +200,7 @@
 
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
-    initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders,
+    initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo,
     moveMessage: moveMessage, listFolders: listFolders, createFolder: createFolder,
     local: local, loadRules: loadRules, saveRules: saveRules
   };

@@ -5,15 +5,18 @@
   if (!/[?&]mock=1/.test(global.location.search)) return;
   global.SORTER_MOCK = true;
 
-  var settings = {};
+  var settings = {}, handlers = {}, highlighted = [];
+  global.MockSelect = function (ids) { highlighted = ids; if (handlers.selectedItemsChanged) handlers.selectedItemsChanged(); };
   var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50', dateTimeCreated: new Date(Date.now() - 3 * 86400000) };
   global.Office = {
     onReady: function (cb) { setTimeout(cb, 0); return Promise.resolve(); },
-    EventType: { ItemChanged: 'itemChanged' },
+    EventType: { ItemChanged: 'itemChanged', SelectedItemsChanged: 'selectedItemsChanged' },
+    MailboxEnums: { RestVersion: { v2_0: 'v2.0' } },
     context: {
       requirements: { isSetSupported: function () { return true; } },
       roamingSettings: { get: function (k) { return settings[k]; }, set: function (k, v) { settings[k] = v; }, saveAsync: function (cb) { cb({ status: 'succeeded' }); } },
-      mailbox: { item: item, addHandlerAsync: function () {} }
+      mailbox: { item: item, addHandlerAsync: function (type, fn) { handlers[type] = fn; }, convertToRestId: function (id) { return id; },
+        getSelectedItemsAsync: function (cb) { cb({ status: 'succeeded', value: highlighted.map(function (id) { return { itemId: id, itemType: 'message' }; }) }); } }
     }
   };
 
@@ -76,6 +79,12 @@
     if (/sentitems\/messages/.test(url)) return { value: [{ toRecipients: [{ emailAddress: { address: 'andy@example-friend.com' } }], ccRecipients: [] }] };
     if (/inbox\/childFolders/.test(url)) return { value: [] };
     if (/\/me\/mailFolders\?/.test(url)) return { value: folders };
+    if ((m = /\/me\/messages\/([^?]+)\?\$select=id,from/.exec(url))) {
+      var one = inbox.filter(function (x) { return x.id === m[1]; })[0];
+      if (!one) throw new Error('mock: no such message');
+      var copy = JSON.parse(JSON.stringify(one)); copy.internetMessageHeaders = unsubSenders[one.from.emailAddress.address] ? headers.unsub : [];
+      return copy;
+    }
     if ((m = /\/me\/messages\/([^?]+)\?\$select=internetMessageHeaders/.exec(url))) {
       var msg = inbox.filter(function (x) { return x.id === m[1]; })[0];
       return { internetMessageHeaders: msg && unsubSenders[msg.from.emailAddress.address] ? headers.unsub : [] };

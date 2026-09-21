@@ -11,7 +11,7 @@
     range: 'today', busy: false, me: null,
     messages: [], senders: {}, rows: [], assessments: {},
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
-    folders: [], selected: null, editing: null, domainFlag: {}, cardMore: false,
+    folders: [], selected: null, picked: null, pickedNote: '', pickAssess: {}, editing: null, domainFlag: {}, cardMore: false,
     open: { suggest: true, file: true, stay: false }, openDest: {},
     ruleSnapshot: null, toastTimer: null
   };
@@ -138,7 +138,7 @@
   // ------------------------------------------------------------------ rules
   function domainOf(address) { var p = E.addressParts(address); return p ? E.registrableDomain(p.domain) : null; }
   function canUseDomain(address) { var d = domainOf(address); return !!d && !PUBLIC_DOMAINS.test(d); }
-  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; return address; }
+  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; var pk = (S.picked || []).filter(function (x) { return x.address === address; })[0]; if (pk) return pk.name; return address; }
 
   function usesDomain(address) {
     if (S.domainFlag[address] !== undefined) return S.domainFlag[address];
@@ -269,9 +269,52 @@
       } else { S.selected = null; }
     } catch (e) { S.selected = null; }
   }
+  // Several emails highlighted in Outlook's list: show their senders so rules can be set on just those.
+  var pickCache = {}, pickRun = 0;
+  function readHighlighted() {
+    var mb = Office.context.mailbox, run = ++pickRun;
+    if (!mb.getSelectedItemsAsync) return;
+    mb.getSelectedItemsAsync(function (res) {
+      if (run !== pickRun) return;
+      var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || i.itemType === 'message'; }) : [];
+      if (items.length < 2) { if (S.picked || S.pickedNote) { S.picked = null; S.pickedNote = ''; render(); } return; }
+      loadHighlighted(items, run);
+    });
+  }
+  async function loadHighlighted(items, run) {
+    S.pickedNote = 'Looking at ' + items.length + ' highlighted emails...'; S.picked = null; render();
+    var i = 0, found = [];
+    async function worker() {
+      while (i < items.length) {
+        var it = items[i++];
+        try {
+          if (!pickCache[it.itemId]) {
+            var id = Office.context.mailbox.convertToRestId ? Office.context.mailbox.convertToRestId(it.itemId, Office.MailboxEnums.RestVersion.v2_0) : it.itemId;
+            pickCache[it.itemId] = await G.messageInfo(id);
+          }
+          found.push(pickCache[it.itemId]);
+        } catch (e) { /* not a message we can read (other mailbox, draft...) - skip */ }
+      }
+    }
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    if (run !== pickRun) return;
+    var by = {}, evidenceChanged = false;
+    found.forEach(function (m) {
+      if (!E.addressParts(m.from)) return;
+      var s = by[m.from] || (by[m.from] = { address: m.from, name: m.fromName || m.from, total: 0, transN: 0, latest: m, oldest: m.received });
+      s.total++; if (m.received > s.latest.received) s.latest = m; if (m.received < s.oldest) s.oldest = m.received;
+      if (!S.ctx.evidence[m.from]) { S.ctx.evidence[m.from] = E.readHeaders(m.headers); evidenceChanged = true; }
+    });
+    if (evidenceChanged) G.local.set('is.evidence.v1', S.ctx.evidence);
+    S.picked = Object.keys(by).map(function (k) { return by[k]; }).sort(function (x, y) { return y.total - x.total || x.name.localeCompare(y.name); });
+    S.pickedNote = found.length + ' highlighted email' + (found.length === 1 ? '' : 's') + ' · ' + S.picked.length + ' sender' + (S.picked.length === 1 ? '' : 's');
+    render();
+  }
+
   function watchSelection() {
-    readSelection();
+    readSelection(); readHighlighted();
     try { Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, function () { readSelection(); render(); }); } catch (e) { /* not pinned-capable */ }
+    try { if (Office.EventType.SelectedItemsChanged) Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, function () { readHighlighted(); }); } catch (e) { /* single selection only */ }
   }
 
   // ------------------------------------------------------------------ rendering
@@ -299,7 +342,21 @@
       + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder or whole domain...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
   }
 
+  function pickedCard() {
+    S.pickAssess = {};
+    if (!S.picked) return '<div class="card"><p class="eyebrow">Highlighted emails</p><p class="state">' + esc(S.pickedNote) + '</p></div>';
+    var oldest = null, oldestRule = null;
+    var rows = S.picked.map(function (s) {
+      var rule = E.ruleFor(S.rules, s.address), as = S.assessments[s.address] || E.assessSender(s, S.ctx);
+      S.pickAssess[s.address] = as;
+      if (rule && rule.bucket !== 'I' && (!oldest || s.oldest < oldest)) { oldest = s.oldest; oldestRule = rule; }
+      return senderRow(s, { suggest: !rule && as.kind === 'suggest', as: as });
+    }).join('');
+    return '<div class="card picked"><p class="eyebrow">' + esc(S.pickedNote) + '</p>' + rows + rangeHint(oldestRule, oldest, true) + '</div>';
+  }
+
   function selectedCard() {
+    if (S.picked || S.pickedNote) return pickedCard();
     if (!S.selected) return '';
     var a = S.selected.address, rule = E.ruleFor(S.rules, a), state;
     if (rule) state = (rule.bucket === 'I' ? 'Your rule: always keep in the inbox' : 'Your rule: always ' + (rule.bucket === 'D' ? 'delete' : 'file under ' + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '');
@@ -310,25 +367,24 @@
       else state = 'No rule yet - stays in the inbox';
     }
     return '<div class="card"><p class="eyebrow">Selected email</p><div class="who">' + esc(S.selected.name || a) + '</div><div class="addr">' + esc(a) + '</div>'
-      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule) + editorHtml(a, true) + '</div>';
+      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule, S.selected.received) + editorHtml(a, true) + '</div>';
   }
 
   // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
-  function rangeHint(rule) {
-    var when = S.selected.received;
+  function rangeHint(rule, when, many) {
     if (!rule || rule.bucket === 'I' || !when || isNaN(when)) return '';
     var r = rangeDates(S.range);
     if (when >= r[0] && when < r[1]) return '';
     var want = E.rangeContaining(when), labels = { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' };
     var day = (Date.now() - when) < 6 * 86400000 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    if (!want) return '<p class="hint">This email is from ' + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
-    return '<p class="hint">This email is from ' + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
+    if (!want) return '<p class="hint">' + (many ? 'The oldest of these is from ' : 'This email is from ') + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
+    return '<p class="hint">' + (many ? 'The oldest of these is from ' : 'This email is from ') + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
       + '<button class="link" data-act="range" data-range="' + want + '">Show ' + esc(labels[want]) + '</button></p>';
   }
 
   function senderRow(s, opts) {
     opts = opts || {};
-    var a = s.address, rule = E.ruleFor(S.rules, a), as = S.assessments[a] || {};
+    var a = s.address, rule = E.ruleFor(S.rules, a), as = opts.as || S.assessments[a] || {};
     var acts = '';
     if (opts.suggest) {
       acts += '<button class="round yes" data-act="approve" title="Approve: always ' + esc(E.bucketName(as.bucket)) + '" aria-label="Approve">' + ICON.check + '</button>'
@@ -462,7 +518,7 @@
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
       else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest !== 'I'; }).length <= 15; S.openDest[c] = !cur; render(); }
-      else if (act === 'approve') { setRule(address, S.assessments[address].bucket); }
+      else if (act === 'approve') { setRule(address, (S.assessments[address] || S.pickAssess[address]).bucket); }
       else if (act === 'reject') { setRule(address, 'I'); }
       else if (act === 'approve-all') { approveAll(); }
       else if (act === 'edit') { S.editing = S.editing === address ? null : address; render(); }

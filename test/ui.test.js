@@ -85,6 +85,21 @@ const assert = require('assert');
   assert.strictEqual(await dark.$('.card .hint'), null, 'hint gone once the range covers the email');
   console.log('range hint: shown, link switched to', await dark.inputValue('#range'));
 
+  // highlight three of yesterday's emails in Outlook's list: the card lists their senders and rules can be set there
+  const multi = await open();
+  await multi.evaluate(() => window.MockSelect(['MOCK-19', 'MOCK-20', 'MOCK-21']));
+  await multi.waitForSelector('.card.picked .row');
+  const pickedText = (await multi.textContent('.card.picked')).replace(/\s+/g, ' ');
+  assert.ok(/3 highlighted emails · 2 senders/.test(pickedText), 'highlighted card: ' + pickedText);
+  await multi.click('.card.picked .row[data-addr="amazon-offers@amazon.co.uk"] [data-act="approve"]');
+  const after = (await multi.textContent('.card.picked')).replace(/\s+/g, ' ');
+  assert.ok(/oldest of these is from/.test(after) && /Show Yesterday/.test(after), 'highlighted hint: ' + after);
+  assert.strictEqual((await multi.evaluate(() => window.MockLog)).moves.length, 0, 'setting rules on highlighted emails moves nothing');
+  await multi.screenshot({ path: path.join(shots, '6-highlighted.png') });
+  await multi.evaluate(() => window.MockSelect([]));
+  await multi.waitForSelector('.card:not(.picked)');
+  console.log('highlighted emails: card shown, rule set, back to single');
+
   console.log('page errors:', errors.length ? errors : 'none');
   await browser.close(); server.close();
 })().catch(e => { console.error('TEST FAILED', e); process.exit(1); });
