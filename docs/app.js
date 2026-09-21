@@ -278,7 +278,7 @@
     function onItems(res) {
       pickDiag.last = res && res.status === 'succeeded' ? (res.value ? res.value.length : 0) + ' item(s): ' + (res.value || []).map(function (i) { return i.itemType || '?'; }).join(',') : 'failed: ' + (res && res.error && res.error.message);
       if (run !== pickRun) return;
-      var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || i.itemType === 'message'; }) : [];
+      var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || String(i.itemType).toLowerCase() === 'message'; }) : [];
       if (items.length < 2) { S.picked = null; S.pickedNote = ''; if (S.messages.length) render(); return; }
       loadHighlighted(items, run);
     }
