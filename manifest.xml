@@ -4,7 +4,7 @@
            xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
            xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
            xsi:type="MailApp">
-  <Id>dfbc086d-afba-4fca-bcf4-c3893934c736</Id>
+  <Id>a18bf409-2a81-4cab-a3bb-c6dd6203022e</Id>
   <Version>1.2.0.0</Version>
   <ProviderName>Inbox Sorter</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
@@ -79,7 +79,7 @@
         <bt:Image id="Icon.80" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/taskpane.html"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/taskpane.html?m=2"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Group.Label" DefaultValue="Inbox Sorter"/>
@@ -134,7 +134,7 @@
           <bt:Image id="Icon.80" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/assets/icon-80.png"/>
         </bt:Images>
         <bt:Urls>
-          <bt:Url id="Taskpane.Url" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/taskpane.html"/>
+          <bt:Url id="Taskpane.Url" DefaultValue="https://justinhmorris-a11y.github.io/inbox-sorter/taskpane.html?m=2"/>
         </bt:Urls>
         <bt:ShortStrings>
           <bt:String id="Group.Label" DefaultValue="Inbox Sorter"/>

@@ -357,7 +357,7 @@
     return '<div class="card picked"><p class="eyebrow">' + esc(S.pickedNote) + '</p>' + rows + rangeHint(oldestRule, oldest, true) + '</div>';
   }
 
-  function diagLine() { return window.SORTER_MOCK ? '' : '<p style="margin:6px 0 0;font-size:11px;opacity:.6">highlight check: ' + esc(pickDiag.last) + ' · events ' + pickDiag.events + ' · handler ' + esc(pickDiag.handler || 'pending') + '</p>'; }
+  function diagLine() { return window.SORTER_MOCK ? '' : '<p style="margin:6px 0 0;font-size:11px;opacity:.6">highlight check: ' + esc(pickDiag.last) + ' · events ' + pickDiag.events + ' · handler ' + esc(pickDiag.handler || 'pending') + ' · ' + esc(location.search || 'old install') + '</p>'; }
 
   function selectedCard() {
     if (S.picked || S.pickedNote) return pickedCard();
