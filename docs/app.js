@@ -335,9 +335,15 @@
         + '<button class="round no" data-act="reject" title="No - keep this sender in the inbox" aria-label="Reject">' + ICON.cross + '</button>';
     }
     acts += '<button class="round more" data-act="edit" title="Choose something else" aria-label="Choose a rule" aria-expanded="' + (S.editing === a) + '">' + ICON.more + '</button>';
-    var why = opts.suggest ? pill(as.bucket) + ' ' + esc(as.why) : (rule ? pill(rule.bucket) + (rule.scope === 'domain' ? ' all of ' + esc(rule.key) : '') : esc(as.why || ''));
-    return '<div class="row" data-addr="' + esc(a) + '"><div class="who" title="' + esc(a) + '">' + esc(s.name) + '<span class="n">' + s.total + '</span></div>'
-      + '<div class="acts">' + acts + '</div><div class="what">' + esc(s.latest ? s.latest.subject : '') + '</div><div class="why">' + why + '</div></div>'
+    // suggestions: name, then folder + latest subject (the reason is the tooltip). Everything else: one line.
+    var subject = esc(s.latest ? s.latest.subject : ''), tip = esc(a + (as.why ? ' - ' + as.why : ''));
+    var who = '<div class="who">' + esc(s.name) + '<span class="n">' + s.total + '</span></div>';
+    var tag = opts.suggest ? pill(as.bucket) : (rule && (rule.bucket !== 'I' || rule.scope === 'domain') ? pill(rule.bucket) : '');
+    var body = opts.suggest
+      ? who + '<div class="what">' + tag + ' ' + subject + '</div>'
+      : '<div class="one">' + who + tag + '<div class="what">' + subject + '</div></div>';
+    return '<div class="row' + (opts.suggest ? '' : ' slim') + '" data-addr="' + esc(a) + '" title="' + tip + '"><div class="text">' + body + '</div>'
+      + '<div class="acts">' + acts + '</div></div>'
       + (S.editing === a ? editorHtml(a, false) : '');
   }
 
@@ -345,10 +351,10 @@
     var m = r.msg, a = m.from;
     var link = action === 'keep' ? '<button class="link" data-act="keep" title="Leave this one email in the inbox">Keep</button>'
       : action === 'unkeep' ? '<button class="link" data-act="unkeep">File it</button>' : '';
-    return '<div class="row msg" data-addr="' + esc(a) + '" data-id="' + esc(m.id) + '"><div class="who" title="' + esc(a) + '">' + (m.isRead ? '' : '<span class="unread-dot"></span>') + esc(m.fromName || a) + '</div>'
-      + '<div class="acts">' + link + '<button class="round more" data-act="edit" aria-label="Change the rule" title="Change the rule for this sender" aria-expanded="' + (S.editing === a) + '">' + ICON.more + '</button></div>'
-      + '<div class="what" title="' + esc(m.subject) + '">' + esc(m.subject) + '</div>'
-      + (r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + '</div>' : '') + '</div>';
+    var note = r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + '</div>' : '';
+    return '<div class="row msg slim" data-addr="' + esc(a) + '" data-id="' + esc(m.id) + '" title="' + esc(a) + '"><div class="text">'
+      + '<div class="one"><div class="who">' + (m.isRead ? '' : '<span class="unread-dot"></span>') + esc(m.fromName || a) + '</div><div class="what" title="' + esc(m.subject) + '">' + esc(m.subject) + '</div></div>' + note + '</div>'
+      + '<div class="acts">' + link + '<button class="round more" data-act="edit" aria-label="Change the rule" title="Change the rule for this sender" aria-expanded="' + (S.editing === a) + '">' + ICON.more + '</button></div></div>';
   }
 
   function section(key, title, count, extra, body) {
