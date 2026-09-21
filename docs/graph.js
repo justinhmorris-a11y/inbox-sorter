@@ -188,6 +188,8 @@
     return raw;
   }
 
+  function rulesInMailbox() { try { return !!Office.context.roamingSettings.get('rules'); } catch (e) { return false; } }
+
   function saveRules(rules) {
     var text = JSON.stringify(rules);
     local.set('is.rules.backup', rules);
@@ -203,6 +205,6 @@
     SetupError: SetupError, GraphError: GraphError,
     initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo,
     moveMessage: moveMessage, listFolders: listFolders, createFolder: createFolder,
-    local: local, loadRules: loadRules, saveRules: saveRules
+    local: local, loadRules: loadRules, rulesInMailbox: rulesInMailbox, saveRules: saveRules
   };
 })(typeof self !== 'undefined' ? self : this);
