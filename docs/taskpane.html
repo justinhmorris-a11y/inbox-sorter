@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inbox Sorter</title>
+  <link rel="stylesheet" href="taskpane.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="config.js"></script>
+  <script src="mock.js"></script>
+  <script src="msal-browser.min.js"></script>
+  <script src="engine.js"></script>
+  <script src="graph.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="top-row">
+      <h1>Inbox Sorter</h1>
+      <div class="top-tools">
+        <select id="range" aria-label="Which emails to look at">
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+        <button class="icon-btn" id="refresh" title="Refresh" aria-label="Refresh">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5a6.5 6.5 0 1 0 6.3 8.1.75.75 0 0 1 1.45.38A8 8 0 1 1 15.5 4.2V2.75a.75.75 0 0 1 1.5 0v3.5a.75.75 0 0 1-.75.75h-3.5a.75.75 0 0 1 0-1.5h1.9A6.47 6.47 0 0 0 10 3.5Z"/></svg>
+        </button>
+      </div>
+    </div>
+    <p class="summary" id="summary">Starting...</p>
+  </header>
+
+  <main id="main" aria-live="polite"></main>
+
+  <footer class="bottom">
+    <div class="progress" id="progress" hidden><div class="bar" id="bar"></div></div>
+    <div class="bottom-row">
+      <button class="btn primary" id="tidy" disabled>Tidy now</button>
+      <button class="btn" id="undo" disabled title="Put the last tidy back in the Inbox">Undo</button>
+    </div>
+    <p class="fine" id="fine">Only rules you have approved move mail. Nothing is permanently deleted.</p>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
