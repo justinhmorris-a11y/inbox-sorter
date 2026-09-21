@@ -270,15 +270,16 @@
     } catch (e) { S.selected = null; }
   }
   // Several emails highlighted in Outlook's list: show their senders so rules can be set on just those.
-  var pickCache = {}, pickRun = 0;
+  var pickCache = {}, pickRun = 0, pickDiag = { events: 0, last: 'not asked yet' };   // pickDiag: temporary, shown in the card while this is being proven in real Outlook
   function readHighlighted() {
     var mb = Office.context.mailbox, run = ++pickRun;
-    if (!mb.getSelectedItemsAsync) return;
-    try { mb.getSelectedItemsAsync(onItems); } catch (e) { console.warn('highlighted emails unavailable', e); }   // older manifest / Outlook: single selection still works
+    if (!mb.getSelectedItemsAsync) { pickDiag.last = 'this Outlook does not offer getSelectedItemsAsync'; return; }
+    try { mb.getSelectedItemsAsync(onItems); } catch (e) { pickDiag.last = 'refused: ' + (e && e.message || e); console.warn('highlighted emails unavailable', e); }   // older manifest / Outlook: single selection still works
     function onItems(res) {
+      pickDiag.last = res && res.status === 'succeeded' ? (res.value ? res.value.length : 0) + ' item(s): ' + (res.value || []).map(function (i) { return i.itemType || '?'; }).join(',') : 'failed: ' + (res && res.error && res.error.message);
       if (run !== pickRun) return;
       var items = res && res.status === 'succeeded' && res.value ? res.value.filter(function (i) { return !i.itemType || i.itemType === 'message'; }) : [];
-      if (items.length < 2) { if (S.picked || S.pickedNote) { S.picked = null; S.pickedNote = ''; render(); } return; }
+      if (items.length < 2) { S.picked = null; S.pickedNote = ''; if (S.messages.length) render(); return; }
       loadHighlighted(items, run);
     }
   }
@@ -315,7 +316,7 @@
   function watchSelection() {
     readSelection(); readHighlighted();
     try { Office.context.mailbox.addHandlerAsync(Office.EventType.ItemChanged, function () { readSelection(); render(); }); } catch (e) { /* not pinned-capable */ }
-    try { if (Office.EventType.SelectedItemsChanged) Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, function () { readHighlighted(); }); } catch (e) { /* single selection only */ }
+    try { if (Office.EventType.SelectedItemsChanged) Office.context.mailbox.addHandlerAsync(Office.EventType.SelectedItemsChanged, function () { pickDiag.events++; readHighlighted(); }, function (r) { pickDiag.handler = r && r.status; }); else pickDiag.handler = 'no SelectedItemsChanged event type'; } catch (e) { /* single selection only */ }
   }
 
   // ------------------------------------------------------------------ rendering
@@ -356,6 +357,8 @@
     return '<div class="card picked"><p class="eyebrow">' + esc(S.pickedNote) + '</p>' + rows + rangeHint(oldestRule, oldest, true) + '</div>';
   }
 
+  function diagLine() { return window.SORTER_MOCK ? '' : '<p style="margin:6px 0 0;font-size:11px;opacity:.6">highlight check: ' + esc(pickDiag.last) + ' · events ' + pickDiag.events + ' · handler ' + esc(pickDiag.handler || 'pending') + '</p>'; }
+
   function selectedCard() {
     if (S.picked || S.pickedNote) return pickedCard();
     if (!S.selected) return '';
@@ -368,7 +371,7 @@
       else state = 'No rule yet - stays in the inbox';
     }
     return '<div class="card"><p class="eyebrow">Selected email</p><div class="who">' + esc(S.selected.name || a) + '</div><div class="addr">' + esc(a) + '</div>'
-      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule, S.selected.received) + editorHtml(a, true) + '</div>';
+      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule, S.selected.received) + editorHtml(a, true) + diagLine() + '</div>';
   }
 
   // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
