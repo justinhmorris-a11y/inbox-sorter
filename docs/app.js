@@ -95,22 +95,25 @@
   function rangeLabel() { return { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' }[S.range] || 'Today'; }
   function scopeLabel() { return S.focus ? 'Highlighted' : rangeLabel(); }
 
+  // Each refresh gets a number; if the range changes while a read is in flight, the older read's result is thrown away.
+  var refreshSeq = 0;
   async function refresh() {
     if (S.focus) { pickCache = {}; readHighlighted(); return; }
-    if (S.busy) return;
+    var seq = ++refreshSeq;
     S.busy = true; $('refresh').classList.add('spin');
     try {
       var r = rangeDates(S.range);
       if (!S.messages.length) showLoading('Reading ' + rangeLabel().toLowerCase() + '...');
-      var listed = await G.listInbox(r[0], r[1], function (n) { if (!S.focus) $('summary').textContent = 'Reading... ' + n + ' emails'; });
-      if (S.focus) return;
+      var listed = await G.listInbox(r[0], r[1], function (n) { if (seq === refreshSeq && !S.focus) $('summary').textContent = 'Reading... ' + n + ' emails'; });
+      if (seq !== refreshSeq || S.focus) return;
       S.messages = listed;
       S.senders = E.buildSenders(S.messages);
       await gatherEvidence();
+      if (seq !== refreshSeq) return;
       S.busy = false;
       replan();
-    } catch (err) { showError(err); }
-    finally { S.busy = false; $('refresh').classList.remove('spin'); }
+    } catch (err) { if (seq === refreshSeq) showError(err); }
+    finally { if (seq === refreshSeq) { S.busy = false; $('refresh').classList.remove('spin'); } }
   }
 
   /** Look at the headers of one message per unfamiliar sender (unsubscribe link, bulk / automated markers). */
@@ -229,15 +232,15 @@
       if (r.size > 30000) toast('Your rule list is getting large for Outlook to store - tell Claude.', null);
     });
     // the open email got a rule but sits outside the dates shown: widen the range so Tidy can reach it straight away
-    var sel = S.selected, when = sel && sel.received;
+    var sel = S.selected, when = sel && sel.received, widened = false;
     if (!S.focus && when && !isNaN(when)) {
       var r0 = rangeDates(S.range), cr = cardRule(sel.address);
       if (cr && cr.bucket !== 'I' && !(when >= r0[0] && when < r0[1])) {
         var want = E.rangeContaining(when);
-        if (want) { var selEl = $('range'); selEl.value = want; S.range = want; S.messages = []; S.editing = null; refresh(); }
+        if (want) { var selEl = $('range'); selEl.value = want; S.range = want; S.messages = []; S.editing = null; refresh(); widened = true; }
       }
     }
-    replan();
+    if (!widened) replan();
     if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.subjectText = {}; S.subjectOn = {}; G.saveRules(S.rules); replan(); });
   }
 
@@ -314,6 +317,22 @@
     });
   }
 
+  // 'File this one': just the open email, by its rule, whatever period the pane is showing.
+  async function fileSelectedOne() {
+    var sel = S.selected; if (!sel || !sel.itemId || S.busy) return;
+    var cr = cardRule(sel.address); if (!cr || cr.bucket === 'I') return;
+    S.busy = true; $('tidy').disabled = true; $('undo').disabled = true; $('summary').textContent = 'Reading that email...';
+    try {
+      var id = Office.context.mailbox.convertToRestId ? Office.context.mailbox.convertToRestId(sel.itemId, Office.MailboxEnums.RestVersion.v2_0) : sel.itemId;
+      var m = await G.messageInfo(id);
+      var row = E.plan([m], E.buildSenders([m]), S.rules, S.ctx, { now: new Date() }).rows[0];
+      S.busy = false;
+      if (!row || row.dest === 'I') { replan(); toast(row && row.why ? 'Kept in the inbox: ' + row.why : 'Nothing to file for this email', null); return; }
+      await tidy([row]);
+    } catch (err) { S.busy = false; setProgress(null); showError(err); }
+    finally { S.busy = false; }
+  }
+
   async function tidy(only) {
     var rows = Array.isArray(only) ? only : S.rows.filter(function (r) { return r.dest !== 'I'; });
     if (!rows.length || S.busy) return;
@@ -360,7 +379,7 @@
       S.cardMore = false; S.subjectText = {}; S.subjectOn = {}; S.readFlag = {};
       var item = Office.context.mailbox.item;
       if (item && item.from && item.from.emailAddress) {
-        S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '', received: item.dateTimeCreated ? new Date(item.dateTimeCreated) : null };
+        S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '', received: item.dateTimeCreated ? new Date(item.dateTimeCreated) : null, itemId: item.itemId || null };
       } else { S.selected = null; }
     } catch (e) { S.selected = null; }
   }
@@ -461,9 +480,13 @@
 
   // 'File Ocado now · 4 emails': apply just the open email's rule, leaving everything else for Tidy.
   function fileTheseButton() {
-    var rows = rowsForSelected(); if (!rows.length) return '';
-    var cr = cardRule(S.selected.address), who = cr.scope === 'subject' ? '"' + cr.has + '"' : (S.selected.name || S.selected.address);
-    return '<button class="btn file-these" data-act="file-these"' + (S.busy ? ' disabled' : '') + '>File ' + esc(who) + ' now · ' + plural(rows.length, 'email') + '</button>';
+    var sel = S.selected, cr = cardRule(sel.address);
+    if (!cr || cr.bucket === 'I') return '';
+    var rows = rowsForSelected(), dis = S.busy ? ' disabled' : '';
+    var one = sel.itemId ? '<button class="btn file-these" data-act="file-one"' + dis + '>File this one</button>' : '';
+    var who = cr.scope === 'subject' ? '"' + cr.has + '"' : (sel.name || sel.address);
+    var all = rows.length ? '<button class="btn file-these" data-act="file-these"' + dis + '>File ' + esc(who) + ' now · ' + plural(rows.length, 'email') + '</button>' : '';
+    return one || all ? '<div class="file-row">' + one + all + '</div>' : '';
   }
 
   // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
@@ -627,6 +650,7 @@
       else if (act === 'unkeep') { snapshot(); delete S.rules.keep[id]; afterRuleChange('It will be filed on the next tidy'); }
       else if (act === 'range') { var sel = $('range'); sel.value = el.getAttribute('data-range'); sel.dispatchEvent(new Event('change')); }
       else if (act === 'file-these') { tidy(rowsForSelected()); }
+      else if (act === 'file-one') { fileSelectedOne(); }
       else if (act === 'retry') { boot().catch(showError); }
     });
 

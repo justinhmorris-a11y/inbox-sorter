@@ -76,6 +76,7 @@ const assert = require('assert');
 
   const dark = await open('dark');
   await dark.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
+  await page.close();
   // subject rule from the card: open one of Ross's 'Demo booked' emails, type the subject text, pick a folder
   const sj = await open();
   await sj.evaluate(() => window.MockOpen('ross@example-colleague.com', 'Ross', 'Demo booked -'));
@@ -99,7 +100,7 @@ const assert = require('assert');
   await sj.waitForFunction(() => /file 3 emails$/.test(document.getElementById('tidy').textContent), null, { timeout: 10000 });
   const sjMoved = (await sj.evaluate(() => window.MockLog)).moves;
   assert.strictEqual(sjMoved.length, 2, 'only the two Demo booked emails moved'); assert.ok(sjMoved.every(m => m.to === 'F-dez'));
-  assert.strictEqual(await sj.$('.card [data-act="file-these"]'), null, 'button gone once nothing is left to file');
+  assert.strictEqual(await sj.locator('.card [data-act="file-these"]').count(), 0, 'button gone once nothing is left to file');
   console.log('file-these: moved', sjMoved.length, '| tidy still offers', (await sj.textContent('#tidy')).trim());
   await sj.click('#undo');
   await sj.waitForFunction(() => /put back/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
@@ -111,6 +112,23 @@ const assert = require('assert');
   assert.strictEqual((await sj.textContent('#tidy')).trim(), 'Tidy now · file 3 emails', 'subject rule removed, seeded rules remain');
   console.log('subject rule: set on Ross/Demo booked, filed 2, other mail untouched, removed');
 
+  await sj.close();
+  // 'File this one': the open email (Sports Direct 'New season arrivals', yesterday, MOCK-22) is filed alone while the pane shows Today
+  const one = await open();
+  await one.evaluate(() => window.MockOpen('donotreply@email.sportsdirect.com', 'Sports Direct', 'New season arrivals', new Date(Date.now() - 86400000), 'MOCK-22'));
+  await one.waitForFunction(() => /New season|Sports Direct/.test(document.querySelector('.card .who').textContent), null, { timeout: 10000 });
+  await one.click('.card [data-code="N"]');   // rule set -> range widens to Yesterday by itself
+  await one.waitForFunction(() => /^Yesterday/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
+  await one.selectOption('#range', 'today');
+  await one.waitForFunction(() => /^Today · 20 emails/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
+  assert.strictEqual((await one.textContent('.card [data-act="file-these"]')).trim(), 'File Sports Direct now · 1 email', 'sender-wide button counts only Today\'s Sports Direct mail');
+  await one.click('.card [data-act="file-one"]');
+  await one.waitForFunction(() => /Filed 1 email/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  const oneMoves = (await one.evaluate(() => window.MockLog)).moves;
+  assert.deepStrictEqual(oneMoves.map(m => m.id), ['MOCK-22'], 'only the open email moved');
+  console.log('file this one: moved', oneMoves[0].id, 'to', oneMoves[0].to, 'while the pane showed Today');
+
+  await one.close();
   // 'mark as read' tick box: Sports Direct newsletters get filed AND marked read; undo restores unread
   const rd = await open();
   await rd.selectOption('#range', '7');
@@ -132,11 +150,13 @@ const assert = require('assert');
   assert.deepStrictEqual(rdLog.reads.filter(r => !r.isRead).map(r => r.id).sort(), readIds, 'undo marks the same mail unread again');
   console.log('mark as read: filed+read', readIds.length, '| undo restored unread');
 
+  await rd.close();
   // the open email is 3 days old: setting a rule on it widens the range to Last 7 days by itself, so Tidy can reach it
   await dark.waitForFunction(() => /^Last 7 days/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
-  assert.strictEqual(await dark.$('.card .hint'), null, 'no hint needed once the range covers the email');
+  assert.strictEqual(await dark.locator('.card .hint').count(), 0, 'no hint needed once the range covers the email');
   console.log('auto range: rule on a 3-day-old email switched the pane to', await dark.inputValue('#range'));
 
+  await dark.close();
   // highlight three of yesterday's emails in Outlook's list: the pane shows, and tidies, only those
   const multi = await open();
   const sum = async () => (await multi.textContent('#summary')).replace(/\s+/g, ' ').trim();
@@ -157,6 +177,7 @@ const assert = require('assert');
   await multi.waitForFunction(() => /^Today/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
   console.log('selection cleared:', await sum());
 
+  await multi.close();
   // Outlook refusing the highlighted-emails call (older manifest) must not break the pane
   const refused = await browser.newPage();
   await refused.route('**/appsforoffice.microsoft.com/**', r => r.fulfill({ status: 200, contentType: 'text/javascript', body: '' }));

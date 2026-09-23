@@ -7,8 +7,8 @@
 
   var settings = {}, handlers = {}, highlighted = [];
   global.MockSelect = function (ids) { highlighted = ids; if (handlers.selectedItemsChanged) handlers.selectedItemsChanged(); };
-  var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50', dateTimeCreated: new Date(Date.now() - 3 * 86400000) };
-  global.MockOpen = function (addr, name, subject, when) { item.from = { emailAddress: addr, displayName: name }; item.subject = subject; item.dateTimeCreated = when || new Date(); if (handlers.itemChanged) handlers.itemChanged(); };
+  var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50', dateTimeCreated: new Date(Date.now() - 3 * 86400000), itemId: 'MOCK-1' };
+  global.MockOpen = function (addr, name, subject, when, id) { item.from = { emailAddress: addr, displayName: name }; item.subject = subject; item.dateTimeCreated = when || new Date(); item.itemId = id || null; if (handlers.itemChanged) handlers.itemChanged(); };
   global.Office = {
     onReady: function (cb) { setTimeout(cb, 0); return Promise.resolve(); },
     EventType: { ItemChanged: 'itemChanged', SelectedItemsChanged: 'selectedItemsChanged' },
