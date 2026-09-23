@@ -93,6 +93,16 @@ const assert = require('assert');
   const sjMain = (await sj.textContent('#main')).replace(/\s+/g, ' ');
   assert.ok(/Keystone sprint/.test(sjMain) && /your rule for "Demo booked"/.test(sjMain), 'Ross\'s other mail still listed as staying');
   await sj.screenshot({ path: path.join(shots, '7-subject-rule.png') });
+  // 'File "Demo booked" now' files just those two, leaving the 3 seeded ones for Tidy
+  assert.strictEqual((await sj.textContent('.card [data-act="file-these"]')).trim(), 'File "Demo booked" now · 2 emails');
+  await sj.click('.card [data-act="file-these"]');
+  await sj.waitForFunction(() => /file 3 emails$/.test(document.getElementById('tidy').textContent), null, { timeout: 10000 });
+  const sjMoved = (await sj.evaluate(() => window.MockLog)).moves;
+  assert.strictEqual(sjMoved.length, 2, 'only the two Demo booked emails moved'); assert.ok(sjMoved.every(m => m.to === 'F-dez'));
+  assert.strictEqual(await sj.$('.card [data-act="file-these"]'), null, 'button gone once nothing is left to file');
+  console.log('file-these: moved', sjMoved.length, '| tidy still offers', (await sj.textContent('#tidy')).trim());
+  await sj.click('#undo');
+  await sj.waitForFunction(() => /put back/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
   // reopening a matching email later shows the rule with the box ticked
   await sj.evaluate(() => window.MockOpen('ross@example-colleague.com', 'Ross', 'RE: Demo booked - Acme'));
   await sj.waitForFunction(() => /"Demo booked" from this sender/.test(document.querySelector('.card').textContent), null, { timeout: 10000 });

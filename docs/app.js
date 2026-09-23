@@ -304,8 +304,18 @@
     return { done: done };
   }
 
-  async function tidy() {
-    var rows = S.rows.filter(function (r) { return r.dest !== 'I'; });
+  // Rows the open email's rule would file in the period shown (that sender, or that subject rule's matches).
+  function rowsForSelected() {
+    var sel = S.selected; if (!sel || S.focus) return [];
+    var cr = cardRule(sel.address); if (!cr || cr.bucket === 'I') return [];
+    return S.rows.filter(function (r) {
+      if (r.dest === 'I' || r.msg.from !== sel.address) return false;
+      return cr.scope === 'subject' ? (r.rule && r.rule.scope === 'subject' && r.rule.has === cr.has) : !(r.rule && r.rule.scope === 'subject');
+    });
+  }
+
+  async function tidy(only) {
+    var rows = Array.isArray(only) ? only : S.rows.filter(function (r) { return r.dest !== 'I'; });
     if (!rows.length || S.busy) return;
     S.busy = true; $('tidy').disabled = true; $('undo').disabled = true;
     try {
@@ -446,7 +456,14 @@
       else state = 'No rule yet - stays in the inbox';
     }
     return '<div class="card"><p class="eyebrow">Selected email</p><div class="who">' + esc(S.selected.name || a) + '</div><div class="addr">' + esc(a) + '</div>'
-      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule, S.selected.received) + editorHtml(a, true) + '</div>';
+      + '<p class="state">' + esc(state) + '</p>' + rangeHint(rule, S.selected.received) + editorHtml(a, true) + fileTheseButton() + '</div>';
+  }
+
+  // 'File Ocado now · 4 emails': apply just the open email's rule, leaving everything else for Tidy.
+  function fileTheseButton() {
+    var rows = rowsForSelected(); if (!rows.length) return '';
+    var cr = cardRule(S.selected.address), who = cr.scope === 'subject' ? '"' + cr.has + '"' : (S.selected.name || S.selected.address);
+    return '<button class="btn file-these" data-act="file-these"' + (S.busy ? ' disabled' : '') + '>File ' + esc(who) + ' now · ' + plural(rows.length, 'email') + '</button>';
   }
 
   // A rule was set on the open email but it is outside the dates shown, so Tidy cannot reach it: say so.
@@ -586,7 +603,7 @@
     wired = true;
     $('range').addEventListener('change', function (e) { S.range = e.target.value; S.focus = null; S.messages = []; S.editing = null; refresh(); });
     $('refresh').addEventListener('click', function () { refresh(); });
-    $('tidy').addEventListener('click', tidy);
+    $('tidy').addEventListener('click', function () { tidy(); });
     $('undo').addEventListener('click', undo);
 
     $('main').addEventListener('click', function (e) {
@@ -609,6 +626,7 @@
       else if (act === 'keep') { snapshot(); S.rules.keep[id] = Date.now(); afterRuleChange('Keeping that one in the inbox'); }
       else if (act === 'unkeep') { snapshot(); delete S.rules.keep[id]; afterRuleChange('It will be filed on the next tidy'); }
       else if (act === 'range') { var sel = $('range'); sel.value = el.getAttribute('data-range'); sel.dispatchEvent(new Event('change')); }
+      else if (act === 'file-these') { tidy(rowsForSelected()); }
       else if (act === 'retry') { boot().catch(showError); }
     });
 

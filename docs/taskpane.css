@@ -168,6 +168,8 @@ main { flex: 1; overflow-y: auto; padding: 0 0 12px; }
 .card.picked .hint { margin-top: 6px; }
 .card .hint { font-size: 12px; margin: 0 0 8px; padding: 6px 8px; border-radius: 4px; background: var(--surface-2); color: var(--fg); }
 .card .editor { margin: 0; padding: 0; border: 0; background: transparent; }
+.card .file-these { display: block; width: 100%; margin-top: 10px; background: var(--brand-tint); border-color: transparent; color: var(--brand); }
+.card .file-these:hover:not(:disabled) { background: var(--brand); color: var(--brand-fg); }
 
 /* ---- empty / message states ---- */
 .state-box { margin: 28px 20px; text-align: center; color: var(--fg-2); }
