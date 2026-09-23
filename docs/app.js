@@ -228,6 +228,15 @@
     G.saveRules(S.rules).then(function (r) {
       if (r.size > 30000) toast('Your rule list is getting large for Outlook to store - tell Claude.', null);
     });
+    // the open email got a rule but sits outside the dates shown: widen the range so Tidy can reach it straight away
+    var sel = S.selected, when = sel && sel.received;
+    if (!S.focus && when && !isNaN(when)) {
+      var r0 = rangeDates(S.range), cr = cardRule(sel.address);
+      if (cr && cr.bucket !== 'I' && !(when >= r0[0] && when < r0[1])) {
+        var want = E.rangeContaining(when);
+        if (want) { var selEl = $('range'); selEl.value = want; S.range = want; S.messages = []; S.editing = null; refresh(); }
+      }
+    }
     replan();
     if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.subjectText = {}; S.subjectOn = {}; G.saveRules(S.rules); replan(); });
   }
@@ -447,7 +456,7 @@
     if (when >= r[0] && when < r[1]) return '';
     var want = E.rangeContaining(when), labels = { today: 'Today', yesterday: 'Yesterday', '7': 'Last 7 days', '30': 'Last 30 days' };
     var day = (Date.now() - when) < 6 * 86400000 ? when.toLocaleDateString('en-GB', { weekday: 'long' }) : when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    if (!want) return '<p class="hint">This email is from ' + esc(day) + '. Tidy only reaches back 30 days for now, so it stays where it is.</p>';
+    if (!want) return '<p class="hint">This email is from ' + esc(day) + '. The date list only reaches back 30 days; highlight the emails in Outlook to file older ones.</p>';
     return '<p class="hint">This email is from ' + esc(day) + ', outside "' + esc(rangeLabel()) + '", so Tidy will not pick it up here. '
       + '<button class="link" data-act="range" data-range="' + want + '">Show ' + esc(labels[want]) + '</button></p>';
   }
