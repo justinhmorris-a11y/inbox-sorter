@@ -150,6 +150,10 @@
     return out;
   }
 
+  async function setRead(id, isRead) {
+    return call('/me/messages/' + encodeURIComponent(id), { method: 'PATCH', body: { isRead: !!isRead } });
+  }
+
   async function moveMessage(id, destinationId, immutable) {
     return call('/me/messages/' + encodeURIComponent(id) + '/move', { method: 'POST', body: { destinationId: destinationId }, immutable: immutable });
   }
@@ -204,7 +208,7 @@
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
     initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo,
-    moveMessage: moveMessage, listFolders: listFolders, createFolder: createFolder,
+    moveMessage: moveMessage, setRead: setRead, listFolders: listFolders, createFolder: createFolder,
     local: local, loadRules: loadRules, rulesInMailbox: rulesInMailbox, saveRules: saveRules
   };
 })(typeof self !== 'undefined' ? self : this);

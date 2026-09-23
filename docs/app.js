@@ -12,7 +12,7 @@
     messages: [], senders: {}, rows: [], assessments: {},
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
     folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
-    editing: null, domainFlag: {}, cardMore: false,
+    editing: null, domainFlag: {}, readFlag: {}, cardMore: false,
     open: { suggest: true, file: true, stay: false }, openDest: {},
     ruleSnapshot: null, toastTimer: null
   };
@@ -154,15 +154,23 @@
 
   function snapshot() { S.ruleSnapshot = JSON.stringify(S.rules); }
 
+  function readFlag(address) {
+    if (S.readFlag[address] !== undefined) return S.readFlag[address];
+    var r = E.ruleFor(S.rules, address);
+    return !!(r && r.read);
+  }
+
   function setRule(address, code, quiet) {
     snapshot();
+    code = E.joinCode(E.splitCode(code).bucket, readFlag(address));
     var existing = E.ruleFor(S.rules, address);
     if (existing && existing.scope === 'domain') delete S.rules.domains[existing.key];
     delete S.rules.senders[address];
     var dom = domainOf(address);
     if (usesDomain(address) && canUseDomain(address)) S.rules.domains[dom] = code;
     else S.rules.senders[address] = code;
-    var label = code === 'I' ? 'keep in inbox' : code === 'D' ? 'delete' : E.bucketName(code);
+    var b = E.splitCode(code).bucket;
+    var label = (b === 'I' ? 'keep in inbox' : b === 'D' ? 'delete' : E.bucketName(b)) + (E.splitCode(code).read ? ', mark as read' : '');
     afterRuleChange(quiet ? null : senderName(address) + ': ' + label);
   }
 
@@ -171,7 +179,7 @@
     var existing = E.ruleFor(S.rules, address);
     if (existing && existing.scope === 'domain') delete S.rules.domains[existing.key];
     delete S.rules.senders[address];
-    delete S.domainFlag[address];
+    delete S.domainFlag[address]; delete S.readFlag[address];
     afterRuleChange('Rule removed for ' + senderName(address));
   }
 
@@ -180,7 +188,7 @@
       if (r.size > 30000) toast('Your rule list is getting large for Outlook to store - tell Claude.', null);
     });
     replan();
-    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; G.saveRules(S.rules); replan(); });
+    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; G.saveRules(S.rules); replan(); });
   }
 
   function suggestions() {
@@ -232,6 +240,20 @@
     return { moved: moved, failed: failed };
   }
 
+  // items: [{ id, isRead }] ; returns ids updated
+  async function runEach(items, label) {
+    var done = [], i = 0;
+    async function worker() {
+      while (i < items.length) {
+        var it = items[i++];
+        try { await G.setRead(it.id, it.isRead); done.push(it.id); } catch (e) { /* leave as is */ }
+        $('summary').textContent = label + ' ' + i + ' of ' + items.length + '...';
+      }
+    }
+    await Promise.all([worker(), worker(), worker()]);
+    return { done: done };
+  }
+
   async function tidy() {
     var rows = S.rows.filter(function (r) { return r.dest !== 'I'; });
     if (!rows.length || S.busy) return;
@@ -240,8 +262,12 @@
       var ids = {}, codes = rows.map(function (r) { return r.dest; }).filter(function (c, idx, a) { return a.indexOf(c) === idx; });
       for (var c = 0; c < codes.length; c++) ids[codes[c]] = await folderIdFor(codes[c]);
       var result = await runMoves(rows.map(function (r) { return { id: r.msg.id, to: ids[r.dest] }; }), 'Filing');
-      var from = {}; rows.forEach(function (r) { if (r.msg.folder) from[r.msg.id] = r.msg.folder; });
-      G.local.set('is.undo.v1', { at: Date.now(), ids: result.moved, from: from });
+      var from = {}, wasUnread = [];
+      rows.forEach(function (r) { if (r.msg.folder) from[r.msg.id] = r.msg.folder; });
+      var movedSet = {}; result.moved.forEach(function (id) { movedSet[id] = true; });
+      var toRead = rows.filter(function (r) { return r.markRead && movedSet[r.msg.id]; }).map(function (r) { return r.msg.id; });
+      if (toRead.length) { var readRes = await runEach(toRead.map(function (id) { return { id: id, isRead: true }; }), 'Marking as read'); wasUnread = readRes.done; }
+      G.local.set('is.undo.v1', { at: Date.now(), ids: result.moved, from: from, unread: wasUnread });
       var gone = {}; result.moved.forEach(function (id) { gone[id] = true; });
       S.messages = S.messages.filter(function (m) { return !gone[m.id]; });
       if (S.focus) S.focus = S.messages;
@@ -259,6 +285,7 @@
     S.busy = true; $('tidy').disabled = true; $('undo').disabled = true;
     try {
       var result = await runMoves(last.ids.map(function (id) { return { id: id, to: (last.from && last.from[id]) || 'inbox' }; }), 'Putting back');
+      if (last.unread && last.unread.length) await runEach(last.unread.map(function (id) { return { id: id, isRead: false }; }), 'Marking unread again');
       G.local.remove('is.undo.v1');
       S.busy = false;
       toast(plural(result.moved.length, 'email') + ' put back', null);
@@ -337,14 +364,15 @@
     var dom = domainOf(address);
     var domainLine = canUseDomain(address)
       ? '<label class="line"><input type="checkbox" data-act="domain"' + (usesDomain(address) ? ' checked' : '') + '> Everything from ' + esc(dom) + '</label>' : '';
-    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + domainLine;
-    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address);
+    var readLine = '<label class="line"><input type="checkbox" data-act="read"' + (readFlag(address) ? ' checked' : '') + '> Mark as read when filed</label>';
+    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + domainLine + readLine;
+    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address);
     return '<div class="editor" data-addr="' + esc(address) + '">'
       + (inCard ? '' : '<p class="label">Mail from ' + esc(address) + ' always goes to:</p>')
       + '<div class="chips">' + chips + '</div>'
       + (showExtras ? extras : '')
       + '<div class="foot">' + (rule ? '<button class="link" data-act="clear">Remove rule</button>' : '<span></span>')
-      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder or whole domain...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
+      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder, whole domain, mark as read...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
   }
 
   function focusCard() {
@@ -355,7 +383,7 @@
     if (S.focus) return focusCard();
     if (!S.selected) return '';
     var a = S.selected.address, rule = E.ruleFor(S.rules, a), state;
-    if (rule) state = (rule.bucket === 'I' ? 'Your rule: always keep in the inbox' : 'Your rule: always ' + (rule.bucket === 'D' ? 'delete' : 'file under ' + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '');
+    if (rule) state = (rule.bucket === 'I' ? 'Your rule: always keep in the inbox' : 'Your rule: always ' + (rule.bucket === 'D' ? 'delete' : 'file under ' + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '') + (rule.read ? ', mark as read' : '');
     else {
       var as = S.assessments[a] || (E.addressParts(a) ? E.assessSender({ address: a, total: 1, transN: 0 }, S.ctx) : { kind: 'unknown' });
       if (as.kind === 'people') state = 'No rule - stays in the inbox (' + as.why + ')';
@@ -403,7 +431,7 @@
     var m = r.msg, a = m.from;
     var link = action === 'keep' ? '<button class="link" data-act="keep" title="Leave this one email in the inbox">Keep</button>'
       : action === 'unkeep' ? '<button class="link" data-act="unkeep">File it</button>' : '';
-    var note = r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + '</div>' : '';
+    var note = r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + (r.markRead ? ' · will be marked read' : '') + '</div>' : (r.markRead ? '<div class="why">will be marked read</div>' : '');
     return '<div class="row msg slim" data-addr="' + esc(a) + '" data-id="' + esc(m.id) + '" title="' + esc(a) + '"><div class="text">'
       + '<div class="one"><div class="who">' + (m.isRead ? '' : '<span class="unread-dot"></span>') + esc(m.fromName || a) + '</div><div class="what" title="' + esc(m.subject) + '">' + esc(m.subject) + '</div></div>' + note + '</div>'
       + '<div class="acts">' + link + '<button class="round more" data-act="edit" aria-label="Change the rule" title="Change the rule for this sender" aria-expanded="' + (S.editing === a) + '">' + ICON.more + '</button></div></div>';
@@ -509,7 +537,7 @@
       var el = e.target.closest('[data-act]');
       if (!el) return;
       var act = el.getAttribute('data-act');
-      if (act === 'domain' || act === 'folder') return;              // handled by 'change'
+      if (act === 'domain' || act === 'folder' || act === 'read') return;   // handled by 'change'
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
@@ -533,6 +561,11 @@
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       if (!address) return;
       if (act === 'folder' && el.value) { setRule(address, el.value); }
+      else if (act === 'read') {
+        S.readFlag[address] = el.checked;
+        var rr = E.ruleFor(S.rules, address);
+        if (rr) setRule(address, rr.bucket); else render();
+      }
       else if (act === 'domain') {
         S.domainFlag[address] = el.checked;
         var rule = E.ruleFor(S.rules, address);

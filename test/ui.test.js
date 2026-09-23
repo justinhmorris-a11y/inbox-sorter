@@ -76,6 +76,27 @@ const assert = require('assert');
 
   const dark = await open('dark');
   await dark.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
+  // 'mark as read' tick box: Sports Direct newsletters get filed AND marked read; undo restores unread
+  const rd = await open();
+  await rd.selectOption('#range', '7');
+  await rd.waitForFunction(() => /^Last 7 days/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
+  await rd.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="edit"]');
+  await rd.check('.editor[data-addr="donotreply@email.sportsdirect.com"] [data-act="read"]');
+  await rd.click('.editor[data-addr="donotreply@email.sportsdirect.com"] [data-code="N"]');
+  const rdMain = (await rd.textContent('#main')).replace(/\s+/g, ' ');
+  assert.ok(/will be marked read/.test(rdMain), 'ready-to-file row says it will be marked read');
+  await rd.click('#tidy');
+  await rd.waitForFunction(() => /Tidy now$/.test(document.getElementById('tidy').textContent), null, { timeout: 10000 });
+  let rdLog = await rd.evaluate(() => window.MockLog);
+  const readIds = rdLog.reads.filter(r => r.isRead).map(r => r.id).sort();
+  assert.ok(readIds.length >= 1, 'at least one unread Sports Direct mail marked read');
+  assert.ok(readIds.every(id => rdLog.moves.some(m => m.id === id)), 'only moved mail is marked read');
+  await rd.click('#undo');
+  await rd.waitForFunction(() => /put back/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  rdLog = await rd.evaluate(() => window.MockLog);
+  assert.deepStrictEqual(rdLog.reads.filter(r => !r.isRead).map(r => r.id).sort(), readIds, 'undo marks the same mail unread again');
+  console.log('mark as read: filed+read', readIds.length, '| undo restored unread');
+
   // the open email is 3 days old: once it has a rule, the card explains why Tidy cannot reach it and offers the right range
   const hint = (await dark.textContent('.card .hint')).replace(/\s+/g, ' ');
   assert.ok(/outside "Today"/.test(hint) && /Show Last 7 days/.test(hint), 'range hint shown: ' + hint);

@@ -91,15 +91,19 @@
     return out;
   }
 
+  // A stored code may end in '*' meaning 'mark as read when filed': 'N*' = Newsletters, read.
+  function splitCode(code) { var s = String(code || ''); var read = /\*$/.test(s); return { bucket: read ? s.slice(0, -1) : s, read: read }; }
+  function joinCode(bucket, read) { return read && bucket !== 'I' ? bucket + '*' : bucket; }
+
   /** The rule that applies to an address, or null. Sender rules beat domain rules; the most specific domain wins. */
   function ruleFor(rules, address) {
-    var a = String(address || '').toLowerCase();
-    if (rules.senders[a]) return { bucket: rules.senders[a], scope: 'sender', key: a };
+    var a = String(address || '').toLowerCase(), c;
+    if (rules.senders[a]) { c = splitCode(rules.senders[a]); return { bucket: c.bucket, read: c.read, scope: 'sender', key: a }; }
     var p = addressParts(a);
     if (!p) return null;
     var d = p.domain;
     while (d) {
-      if (rules.domains[d]) return { bucket: rules.domains[d], scope: 'domain', key: d };
+      if (rules.domains[d]) { c = splitCode(rules.domains[d]); return { bucket: c.bucket, read: c.read, scope: 'domain', key: d }; }
       var dot = d.indexOf('.');
       if (dot < 0) break;
       d = d.slice(dot + 1);
@@ -209,7 +213,7 @@
         else if (RX_ACTION.test(subject)) protect = 'subject looks like it needs action';
       }
       if (protect) return { msg: m, dest: 'I', group: 'kept', why: protect, rule: rule, wouldBe: bucket };
-      return { msg: m, dest: bucket, group: 'file', why: why, rule: rule };
+      return { msg: m, dest: bucket, group: 'file', why: why, rule: rule, markRead: !!(rule.read && !m.isRead) };
     });
     return { rows: rows, assessments: assessments };
   }
@@ -224,7 +228,7 @@
   }
 
   return {
-    rangeContaining: rangeContaining,
+    rangeContaining: rangeContaining, splitCode: splitCode, joinCode: joinCode,
     BUCKETS: BUCKETS, bucketName: bucketName, addressParts: addressParts, registrableDomain: registrableDomain,
     emptyRules: emptyRules, normaliseRules: normaliseRules, ruleFor: ruleFor, readHeaders: readHeaders,
     buildSenders: buildSenders, assessSender: assessSender, plan: plan,

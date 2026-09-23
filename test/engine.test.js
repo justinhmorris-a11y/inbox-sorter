@@ -75,6 +75,19 @@ assert.strictEqual(E.registrableDomain('email.sportsdirect.com'), 'sportsdirect.
 assert.strictEqual(E.registrableDomain('mail.shop.co.uk'), 'shop.co.uk');
 assert.strictEqual(E.registrableDomain('amazon.co.uk'), 'amazon.co.uk');
 assert.deepStrictEqual(E.readHeaders([{ name: 'List-Unsubscribe', value: '<x>' }, { name: 'Auto-Submitted', value: 'no' }]), { unsub: true, bulk: false, auto: false, esp: false });
+// 'mark as read' flag: stored as a '*' suffix, stripped by ruleFor, surfaced as markRead only for unread mail that files
+assert.deepStrictEqual(E.splitCode('N*'), { bucket: 'N', read: true });
+assert.deepStrictEqual(E.splitCode('F:DezRez'), { bucket: 'F:DezRez', read: false });
+assert.strictEqual(E.joinCode('N', true), 'N*'); assert.strictEqual(E.joinCode('I', true), 'I');
+const readRules = E.normaliseRules({ senders: { 'donotreply@email.sportsdirect.com': 'N*' }, domains: { 'golfbreaks.com': 'D' } });
+assert.deepStrictEqual(E.ruleFor(readRules, 'donotreply@email.sportsdirect.com'), { bucket: 'N', read: true, scope: 'sender', key: 'donotreply@email.sportsdirect.com' });
+assert.strictEqual(E.ruleFor(readRules, 'info@emails.golfbreaks.com').read, false);
+p = E.plan(messages, senders, readRules, ctx, { now });
+assert.strictEqual(by(p.rows, 'Outlet savings').dest, 'N');
+assert.strictEqual(by(p.rows, 'Outlet savings').markRead, !by(p.rows, 'Outlet savings').msg.isRead, 'unread newsletter gets marked read');
+assert.strictEqual(by(p.rows, 'Your order SD123').markRead, !by(p.rows, 'Your order SD123').msg.isRead, 'rescued order still honours the flag');
+assert.strictEqual(by(p.rows, 'Justin, make the Algarve').markRead, false, 'no flag on golfbreaks');
+
 // which pane range reaches a given email (drives the 'outside the dates shown' hint)
 const noon = new Date(2026, 8, 21, 12, 0);
 assert.strictEqual(E.rangeContaining(new Date(2026, 8, 21, 0, 5), noon), 'today');

@@ -55,7 +55,7 @@
   var unsubSenders = { 'donotreply@email.sportsdirect.com': 1, 'friendupdates@facebookmail.com': 1, 'amazon-offers@amazon.co.uk': 1, 'info-uk@epsa.com': 1, 'info@emails.golfbreaks.com': 1, 'newsletter@progressiveguitar.example': 1 };
   var folders = [{ id: 'F-inbox', displayName: 'Inbox' }, { id: 'F-audit', displayName: 'Audit' }, { id: 'F-dez', displayName: 'DezRez' }, { id: 'F-hipz', displayName: 'Hipz' }, { id: 'F-ski', displayName: 'Ski erg' }, { id: 'F-trips', displayName: 'Trips' }];
   var moved = {};
-  global.MockLog = { moves: [], created: [] };
+  global.MockLog = { moves: [], created: [], reads: [] };
 
   global.MockGraph = {
     handle: function (method, url, body) {
@@ -70,6 +70,12 @@
   function route(method, url, body) {
     var m;
     if (method === 'POST' && /\/me\/mailFolders$/.test(url)) { var f = { id: 'F-' + body.displayName, displayName: body.displayName }; folders.push(f); global.MockLog.created.push(body.displayName); return f; }
+    if (method === 'PATCH' && (m = /\/me\/messages\/([^/?]+)$/.exec(url))) {
+      var target = inbox.filter(function (x) { return x.id === m[1]; })[0];
+      if (target) target.isRead = !!body.isRead;
+      global.MockLog.reads.push({ id: m[1], isRead: !!body.isRead });
+      return null;
+    }
     if (method === 'POST' && (m = /\/me\/messages\/([^/]+)\/move$/.exec(url))) {
       if (body.destinationId === 'inbox') delete moved[m[1]]; else moved[m[1]] = body.destinationId;
       global.MockLog.moves.push({ id: m[1], to: body.destinationId });
