@@ -8,6 +8,7 @@
   var settings = {}, handlers = {}, highlighted = [];
   global.MockSelect = function (ids) { highlighted = ids; if (handlers.selectedItemsChanged) handlers.selectedItemsChanged(); };
   var item = { from: { emailAddress: 'donotreply@email.sportsdirect.com', displayName: 'Sports Direct' }, subject: 'Outlet savings under £50', dateTimeCreated: new Date(Date.now() - 3 * 86400000) };
+  global.MockOpen = function (addr, name, subject, when) { item.from = { emailAddress: addr, displayName: name }; item.subject = subject; item.dateTimeCreated = when || new Date(); if (handlers.itemChanged) handlers.itemChanged(); };
   global.Office = {
     onReady: function (cb) { setTimeout(cb, 0); return Promise.resolve(); },
     EventType: { ItemChanged: 'itemChanged', SelectedItemsChanged: 'selectedItemsChanged' },
@@ -34,6 +35,8 @@
     mail('amazon-offers@amazon.co.uk', 'Amazon.co.uk', "Prime member, don't forget your 2 free audiobooks", 0, 8, 5),
     mail('info-uk@epsa.com', 'EPSA', 'Download the 2026 Innovation Loans guide', 0, 8, 3),
     mail('ross@example-colleague.com', 'Ross', 'RE: Keystone sprint planning', 0, 7, 50),
+    mail('ross@example-colleague.com', 'Ross', 'Demo booked -', 0, 7, 45),
+    mail('ross@example-colleague.com', 'Ross', 'Demo booked -', 0, 7, 30),
     mail('auto-confirm@amazon.co.uk', 'Amazon.co.uk', "Ordered: 'Notebook A5, 3 pack'", 0, 7, 40, { read: true }),
     mail('shipment-tracking@amazon.co.uk', 'Amazon.co.uk', "Dispatched: 'Notebook A5, 3 pack'", 0, 7, 20),
     mail('payments-messages@amazon.co.uk', 'Amazon Payments', 'Payment declined: please update your payment method', 0, 7, 10),

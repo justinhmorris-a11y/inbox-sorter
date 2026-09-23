@@ -76,6 +76,26 @@ const assert = require('assert');
 
   const dark = await open('dark');
   await dark.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
+  // subject rule from the card: open one of Ross's 'Demo booked' emails, type the subject text, pick a folder
+  const sj = await open();
+  await sj.evaluate(() => window.MockOpen('ross@example-colleague.com', 'Ross', 'Demo booked -'));
+  await sj.waitForFunction(() => /Ross/.test(document.querySelector('.card .who').textContent), null, { timeout: 10000 });
+  await sj.click('.card [data-act="card-more"]');
+  await sj.fill('.card [data-act="subject"]', 'Demo booked');
+  await sj.dispatchEvent('.card [data-act="subject"]', 'change');
+  await sj.check('.card [data-act="read"]');
+  await sj.selectOption('.card select[data-act="folder"]', 'F:DezRez');
+  const sjCard = (await sj.textContent('.card')).replace(/\s+/g, ' ');
+  assert.ok(/Your rule: "Demo booked" from this sender goes to DezRez, mark as read/.test(sjCard), 'card shows subject rule: ' + sjCard);
+  assert.strictEqual((await sj.textContent('#tidy')).trim(), 'Tidy now · file 5 emails', 'the two Demo booked mails join the 3 seeded ones');
+  await sj.click('[data-act="toggle"][data-key="stay"]');
+  const sjMain = (await sj.textContent('#main')).replace(/\s+/g, ' ');
+  assert.ok(/Keystone sprint/.test(sjMain) && /your rule for "Demo booked"/.test(sjMain), 'Ross\'s other mail still listed as staying');
+  await sj.screenshot({ path: path.join(shots, '7-subject-rule.png') });
+  await sj.click('.card [data-act="clear"]');
+  assert.strictEqual((await sj.textContent('#tidy')).trim(), 'Tidy now · file 3 emails', 'subject rule removed, seeded rules remain');
+  console.log('subject rule: set on Ross/Demo booked, filed 2, other mail untouched, removed');
+
   // 'mark as read' tick box: Sports Direct newsletters get filed AND marked read; undo restores unread
   const rd = await open();
   await rd.selectOption('#range', '7');
@@ -109,7 +129,7 @@ const assert = require('assert');
   // highlight three of yesterday's emails in Outlook's list: the pane shows, and tidies, only those
   const multi = await open();
   const sum = async () => (await multi.textContent('#summary')).replace(/\s+/g, ' ').trim();
-  await multi.evaluate(() => window.MockSelect(['MOCK-19', 'MOCK-20', 'MOCK-21']));
+  await multi.evaluate(() => window.MockSelect(['MOCK-21', 'MOCK-22', 'MOCK-23']));
   await multi.waitForFunction(() => /^Highlighted · 3 emails/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
   const focusText = (await multi.textContent('#main')).replace(/\s+/g, ' ');
   assert.ok(/Showing only the 3 emails you have highlighted/.test(focusText), 'focus banner: ' + focusText.slice(0, 120));
@@ -120,7 +140,7 @@ const assert = require('assert');
   await multi.click('#tidy');
   await multi.waitForFunction(() => /Tidy now$/.test(document.getElementById('tidy').textContent), null, { timeout: 10000 });
   const focusMoves = (await multi.evaluate(() => window.MockLog)).moves;
-  assert.deepStrictEqual(focusMoves.map(m => m.id), ['MOCK-21'], 'tidy moved only the highlighted Amazon email');
+  assert.deepStrictEqual(focusMoves.map(m => m.id), ['MOCK-23'], 'tidy moved only the highlighted Amazon email');
   console.log('highlighted emails:', await sum(), '| moved', focusMoves.length);
   await multi.evaluate(() => window.MockSelect([]));
   await multi.waitForFunction(() => /^Today/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });

@@ -75,6 +75,20 @@ assert.strictEqual(E.registrableDomain('email.sportsdirect.com'), 'sportsdirect.
 assert.strictEqual(E.registrableDomain('mail.shop.co.uk'), 'shop.co.uk');
 assert.strictEqual(E.registrableDomain('amazon.co.uk'), 'amazon.co.uk');
 assert.deepStrictEqual(E.readHeaders([{ name: 'List-Unsubscribe', value: '<x>' }, { name: 'Auto-Submitted', value: 'no' }]), { unsub: true, bulk: false, auto: false, esp: false });
+// subject rules: sender + subject text, beat sender/domain rules, never touch the sender's other mail
+const subjRules = E.normaliseRules({ senders: { 'ross@dezrez.com': 'I' }, subjects: [{ from: 'ross@dezrez.com', has: 'demo booked', code: 'F:Demos*' }] });
+assert.deepStrictEqual(E.ruleFor(subjRules, 'ross@dezrez.com', 'Demo booked - Acme'), { bucket: 'F:Demos', read: true, scope: 'subject', key: 'ross@dezrez.com', has: 'demo booked' });
+assert.strictEqual(E.ruleFor(subjRules, 'ross@dezrez.com', 'RE: Project sprint').scope, 'sender', 'other subjects fall through to the sender rule');
+assert.strictEqual(E.ruleFor(subjRules, 'ross@dezrez.com').scope, 'sender', 'no subject given: sender rule');
+assert.strictEqual(E.subjectRuleFor(subjRules, 'other@dezrez.com', 'Demo booked'), null, 'subject rule is per sender');
+const subjMsgs = messages.concat([msg('colleague@dezrez.com', 'A Colleague', 'Demo booked - Acme Ltd', 0), msg('colleague@dezrez.com', 'A Colleague', 'Demo booked - URGENT reply needed', 0)]);
+const subjRules2 = E.normaliseRules({ subjects: [{ from: 'colleague@dezrez.com', has: 'Demo booked', code: 'F:Demos' }] });
+p = E.plan(subjMsgs, E.buildSenders(subjMsgs), subjRules2, ctx, { now });
+assert.strictEqual(by(p.rows, 'Demo booked - Acme').dest, 'F:Demos');
+assert.strictEqual(by(p.rows, 'RE: Project').dest, 'I', 'colleague\'s normal mail stays');
+assert.strictEqual(by(p.rows, 'Demo booked - URGENT').dest, 'I', 'safety net still applies to subject rules');
+assert.strictEqual(E.normaliseRules({ subjects: [{ from: 'x' }, null, { from: 'a@b.c', has: 'q', code: 'N' }] }).subjects.length, 1, 'broken subject rules dropped');
+
 // 'mark as read' flag: stored as a '*' suffix, stripped by ruleFor, surfaced as markRead only for unread mail that files
 assert.deepStrictEqual(E.splitCode('N*'), { bucket: 'N', read: true });
 assert.deepStrictEqual(E.splitCode('F:DezRez'), { bucket: 'F:DezRez', read: false });

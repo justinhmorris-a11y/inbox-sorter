@@ -12,7 +12,7 @@
     messages: [], senders: {}, rows: [], assessments: {},
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
     folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
-    editing: null, domainFlag: {}, readFlag: {}, cardMore: false,
+    editing: null, domainFlag: {}, readFlag: {}, subjectText: {}, cardMore: false,
     open: { suggest: true, file: true, stay: false }, openDest: {},
     ruleSnapshot: null, toastTimer: null
   };
@@ -154,15 +154,36 @@
 
   function snapshot() { S.ruleSnapshot = JSON.stringify(S.rules); }
 
+  // The subject filter in the card's editor: what is typed, else the existing subject rule for the open email, else ''.
+  function subjectFilter(address) {
+    if (S.subjectText[address] !== undefined) return S.subjectText[address];
+    var sel = S.selected && S.selected.address === address ? S.selected : null;
+    var sr = sel ? E.subjectRuleFor(S.rules, address, sel.subject) : null;
+    return sr ? sr.has : '';
+  }
+  function cardRule(address) {   // the rule the card is editing: a subject rule if a filter is set, else the sender/domain rule
+    var has = subjectFilter(address).trim();
+    if (has) { var m = (S.rules.subjects || []).filter(function (r) { return r.from === address && r.has.toLowerCase() === has.toLowerCase(); })[0]; var c = m ? E.splitCode(m.code) : null; return m ? { bucket: c.bucket, read: c.read, scope: 'subject', key: address, has: m.has } : null; }
+    return E.ruleFor(S.rules, address);
+  }
+
   function readFlag(address) {
     if (S.readFlag[address] !== undefined) return S.readFlag[address];
-    var r = E.ruleFor(S.rules, address);
+    var r = cardRule(address);
     return !!(r && r.read);
   }
 
   function setRule(address, code, quiet) {
     snapshot();
     code = E.joinCode(E.splitCode(code).bucket, readFlag(address));
+    var has = subjectFilter(address).trim();
+    if (has) {
+      S.rules.subjects = (S.rules.subjects || []).filter(function (r) { return !(r.from === address && r.has.toLowerCase() === has.toLowerCase()); });
+      S.rules.subjects.push({ from: address, has: has, code: code });
+      var sb = E.splitCode(code).bucket;
+      afterRuleChange(quiet ? null : '"' + has + '" from ' + senderName(address) + ': ' + (sb === 'I' ? 'keep in inbox' : sb === 'D' ? 'delete' : E.bucketName(sb)) + (E.splitCode(code).read ? ', mark as read' : ''));
+      return;
+    }
     var existing = E.ruleFor(S.rules, address);
     if (existing && existing.scope === 'domain') delete S.rules.domains[existing.key];
     delete S.rules.senders[address];
@@ -176,6 +197,13 @@
 
   function clearRule(address) {
     snapshot();
+    var has = subjectFilter(address).trim();
+    if (has) {
+      S.rules.subjects = (S.rules.subjects || []).filter(function (r) { return !(r.from === address && r.has.toLowerCase() === has.toLowerCase()); });
+      delete S.readFlag[address]; delete S.subjectText[address];
+      afterRuleChange('Subject rule removed for ' + senderName(address));
+      return;
+    }
     var existing = E.ruleFor(S.rules, address);
     if (existing && existing.scope === 'domain') delete S.rules.domains[existing.key];
     delete S.rules.senders[address];
@@ -188,7 +216,7 @@
       if (r.size > 30000) toast('Your rule list is getting large for Outlook to store - tell Claude.', null);
     });
     replan();
-    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; G.saveRules(S.rules); replan(); });
+    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.subjectText = {}; G.saveRules(S.rules); replan(); });
   }
 
   function suggestions() {
@@ -297,7 +325,7 @@
   // ------------------------------------------------------------------ selected email
   function readSelection() {
     try {
-      S.cardMore = false;
+      S.cardMore = false; S.subjectText = {}; S.readFlag = {};
       var item = Office.context.mailbox.item;
       if (item && item.from && item.from.emailAddress) {
         S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '', received: item.dateTimeCreated ? new Date(item.dateTimeCreated) : null };
@@ -351,8 +379,9 @@
 
   // ------------------------------------------------------------------ rendering
   function editorHtml(address, inCard) {
-    var rule = E.ruleFor(S.rules, address);
+    var rule = inCard ? cardRule(address) : E.ruleFor(S.rules, address);
     var current = rule ? rule.bucket : null;
+    var has = inCard ? subjectFilter(address) : '';
     var chips = ['I', 'N', 'R', 'T', 'D', 'J'].map(function (code) {
       return '<button class="chip ' + code + '" data-act="set" data-code="' + code + '" aria-pressed="' + (current === code) + '">' + esc(E.BUCKETS[code].label) + '</button>';
     }).join('');
@@ -362,17 +391,18 @@
       .sort(function (a, b) { return a.name.localeCompare(b.name); })
       .map(function (f) { var v = 'F:' + f.name; return '<option value="' + esc(v) + '"' + (v === folderCode ? ' selected' : '') + '>' + esc(f.name) + '</option>'; }).join('');
     var dom = domainOf(address);
-    var domainLine = canUseDomain(address)
+    var domainLine = canUseDomain(address) && !has.trim()
       ? '<label class="line"><input type="checkbox" data-act="domain"' + (usesDomain(address) ? ' checked' : '') + '> Everything from ' + esc(dom) + '</label>' : '';
+    var subjectLine = inCard && S.selected ? '<div class="line"><span>only if subject has</span><input type="text" data-act="subject" value="' + esc(has) + '" placeholder="leave empty for all mail" title="Rule applies only to this sender\'s emails whose subject contains this text"></div>' : '';
     var readLine = '<label class="line"><input type="checkbox" data-act="read"' + (readFlag(address) ? ' checked' : '') + '> Mark as read when filed</label>';
-    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + domainLine + readLine;
-    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address);
+    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + subjectLine + domainLine + readLine;
+    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address) || !!has.trim();
     return '<div class="editor" data-addr="' + esc(address) + '">'
-      + (inCard ? '' : '<p class="label">Mail from ' + esc(address) + ' always goes to:</p>')
+      + (inCard ? (has.trim() ? '<p class="label">Mail from this sender with "' + esc(has.trim()) + '" in the subject goes to:</p>' : '') : '<p class="label">Mail from ' + esc(address) + ' always goes to:</p>')
       + '<div class="chips">' + chips + '</div>'
       + (showExtras ? extras : '')
       + '<div class="foot">' + (rule ? '<button class="link" data-act="clear">Remove rule</button>' : '<span></span>')
-      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder, whole domain, mark as read...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
+      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder, domain, subject, mark as read...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
   }
 
   function focusCard() {
@@ -382,8 +412,9 @@
   function selectedCard() {
     if (S.focus) return focusCard();
     if (!S.selected) return '';
-    var a = S.selected.address, rule = E.ruleFor(S.rules, a), state;
-    if (rule) state = (rule.bucket === 'I' ? 'Your rule: always keep in the inbox' : 'Your rule: always ' + (rule.bucket === 'D' ? 'delete' : 'file under ' + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '') + (rule.read ? ', mark as read' : '');
+    var a = S.selected.address, rule = cardRule(a), state;
+    if (rule) state = (rule.scope === 'subject' ? 'Your rule: "' + rule.has + '" from this sender ' : 'Your rule: always ') + (rule.bucket === 'I' ? (rule.scope === 'subject' ? 'stays in the inbox' : 'keep in the inbox') : (rule.bucket === 'D' ? 'delete' : (rule.scope === 'subject' ? 'goes to ' : 'file under ') + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '') + (rule.read ? ', mark as read' : '');
+    else if (subjectFilter(a).trim()) state = 'No rule yet for "' + subjectFilter(a).trim() + '" from this sender - pick where it goes';
     else {
       var as = S.assessments[a] || (E.addressParts(a) ? E.assessSender({ address: a, total: 1, transN: 0 }, S.ctx) : { kind: 'unknown' });
       if (as.kind === 'people') state = 'No rule - stays in the inbox (' + as.why + ')';
@@ -431,6 +462,7 @@
     var m = r.msg, a = m.from;
     var link = action === 'keep' ? '<button class="link" data-act="keep" title="Leave this one email in the inbox">Keep</button>'
       : action === 'unkeep' ? '<button class="link" data-act="unkeep">File it</button>' : '';
+    if (r.rule && r.rule.scope === 'subject' && r.why === 'your rule') r = Object.assign({}, r, { why: 'your rule for "' + r.rule.has + '"' });
     var note = r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + (r.markRead ? ' · will be marked read' : '') + '</div>' : (r.markRead ? '<div class="why">will be marked read</div>' : '');
     return '<div class="row msg slim" data-addr="' + esc(a) + '" data-id="' + esc(m.id) + '" title="' + esc(a) + '"><div class="text">'
       + '<div class="one"><div class="who">' + (m.isRead ? '' : '<span class="unread-dot"></span>') + esc(m.fromName || a) + '</div><div class="what" title="' + esc(m.subject) + '">' + esc(m.subject) + '</div></div>' + note + '</div>'
@@ -537,7 +569,7 @@
       var el = e.target.closest('[data-act]');
       if (!el) return;
       var act = el.getAttribute('data-act');
-      if (act === 'domain' || act === 'folder' || act === 'read') return;   // handled by 'change'
+      if (act === 'domain' || act === 'folder' || act === 'read' || act === 'subject') return;   // handled by 'change' / 'input'
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
@@ -561,9 +593,14 @@
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       if (!address) return;
       if (act === 'folder' && el.value) { setRule(address, el.value); }
+      else if (act === 'subject') {
+        S.subjectText[address] = el.value; S.readFlag[address] = undefined; delete S.readFlag[address];
+        render();
+        var box = document.querySelector('.editor[data-addr="' + address.replace(/"/g, '\\"') + '"] [data-act="subject"]'); if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+      }
       else if (act === 'read') {
         S.readFlag[address] = el.checked;
-        var rr = E.ruleFor(S.rules, address);
+        var rr = cardRule(address);
         if (rr) setRule(address, rr.bucket); else render();
       }
       else if (act === 'domain') {
@@ -571,6 +608,11 @@
         var rule = E.ruleFor(S.rules, address);
         if (rule) setRule(address, rule.bucket); else render();
       }
+    });
+    // live typing in the subject box only updates state; the rule is written when a destination is chosen
+    $('main').addEventListener('input', function (e) {
+      var el = e.target; if (!el.getAttribute || el.getAttribute('data-act') !== 'subject') return;
+      var holder = el.closest('[data-addr]'); if (holder) S.subjectText[holder.getAttribute('data-addr')] = el.value;
     });
   }
 

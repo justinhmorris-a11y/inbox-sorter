@@ -81,12 +81,13 @@
     return labels.slice(twoPart ? -3 : -2).join('.');
   }
 
-  function emptyRules() { return { v: 1, senders: {}, domains: {}, keep: {} }; }
+  function emptyRules() { return { v: 1, senders: {}, domains: {}, subjects: [], keep: {} }; }
 
   function normaliseRules(r) {
     var out = emptyRules();
     if (r && typeof r === 'object') {
       ['senders', 'domains', 'keep'].forEach(function (k) { if (r[k] && typeof r[k] === 'object') out[k] = r[k]; });
+      if (Array.isArray(r.subjects)) out.subjects = r.subjects.filter(function (s) { return s && s.from && s.has && s.code; });
     }
     return out;
   }
@@ -95,9 +96,21 @@
   function splitCode(code) { var s = String(code || ''); var read = /\*$/.test(s); return { bucket: read ? s.slice(0, -1) : s, read: read }; }
   function joinCode(bucket, read) { return read && bucket !== 'I' ? bucket + '*' : bucket; }
 
-  /** The rule that applies to an address, or null. Sender rules beat domain rules; the most specific domain wins. */
-  function ruleFor(rules, address) {
+  /** Subject rule for this sender + subject, or null. { from, has, code }: sender address, text the subject must contain (case-insensitive). */
+  function subjectRuleFor(rules, address, subject) {
+    var a = String(address || '').toLowerCase(), s = String(subject || '').toLowerCase();
+    var list = rules.subjects || [];
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (r.from === a && s.indexOf(String(r.has).toLowerCase()) >= 0) { var c = splitCode(r.code); return { bucket: c.bucket, read: c.read, scope: 'subject', key: a, has: r.has }; }
+    }
+    return null;
+  }
+
+  /** The rule that applies to a message: subject rule beats sender rule beats domain rule; the most specific domain wins. */
+  function ruleFor(rules, address, subject) {
     var a = String(address || '').toLowerCase(), c;
+    if (subject !== undefined) { var sr = subjectRuleFor(rules, a, subject); if (sr) return sr; }
     if (rules.senders[a]) { c = splitCode(rules.senders[a]); return { bucket: c.bucket, read: c.read, scope: 'sender', key: a }; }
     var p = addressParts(a);
     if (!p) return null;
@@ -191,8 +204,8 @@
     Object.keys(senders).forEach(function (a) { assessments[a] = assessSender(senders[a], ctx); });
 
     var rows = messages.map(function (m) {
-      var rule = ruleFor(rules, m.from);
       var subject = m.subject || '';
+      var rule = ruleFor(rules, m.from, subject);
       if (!rule) {
         var as = assessments[m.from] || { kind: 'unknown', why: 'no clear signal' };
         return { msg: m, dest: 'I', group: as.kind, why: as.why, rule: null, suggestion: as.kind === 'suggest' ? as.bucket : null };
@@ -230,7 +243,7 @@
   return {
     rangeContaining: rangeContaining, splitCode: splitCode, joinCode: joinCode,
     BUCKETS: BUCKETS, bucketName: bucketName, addressParts: addressParts, registrableDomain: registrableDomain,
-    emptyRules: emptyRules, normaliseRules: normaliseRules, ruleFor: ruleFor, readHeaders: readHeaders,
+    emptyRules: emptyRules, normaliseRules: normaliseRules, ruleFor: ruleFor, subjectRuleFor: subjectRuleFor, readHeaders: readHeaders,
     buildSenders: buildSenders, assessSender: assessSender, plan: plan,
     _rx: { action: RX_ACTION, trans: RX_TRANS, strong: RX_TRANS_STRONG }
   };
