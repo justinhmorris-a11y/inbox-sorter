@@ -4,10 +4,11 @@
   "private": true,
   "description": "Outlook task-pane add-in: suggests inbox filing rules, lets the user approve or overrule them, tidies on demand.",
   "scripts": {
-    "test": "node test/engine.test.js && node test/ui.test.js",
+    "test": "node stamp.js && node test/engine.test.js && node test/ui.test.js",
     "test:engine": "node test/engine.test.js",
     "test:ui": "node test/ui.test.js",
-    "preview": "npx --yes http-server docs -p 8123 -c-1 -o \"taskpane.html?mock=1\""
+    "preview": "npx --yes http-server docs -p 8123 -c-1 -o \"taskpane.html?mock=1\"",
+    "stamp": "node stamp.js"
   },
   "devDependencies": {
     "playwright": "^1.55.0"
