@@ -204,6 +204,8 @@ const assert = require('assert');
   const focusText = (await multi.textContent('#main')).replace(/\s+/g, ' ');
   assert.ok(/Showing only the 3 emails you have highlighted/.test(focusText), 'focus banner: ' + focusText.slice(0, 120));
   assert.ok(!/PayPal|GitHub|Facebook/.test(focusText), 'only highlighted senders are listed');
+  // a highlighted sender with no signal (the Sports Direct order mail has no unsubscribe header in this view) still gets a tick
+  assert.ok(await multi.locator('.row[data-addr="amazon-offers@amazon.co.uk"] [data-act="approve"]').count() >= 1, 'tick offered on highlighted senders');
   await multi.click('.row[data-addr="amazon-offers@amazon.co.uk"] [data-act="approve"]');
   assert.strictEqual((await multi.textContent('#tidy')).trim(), 'Tidy now · file 1 email');
   await multi.screenshot({ path: path.join(shots, '6-highlighted.png') });

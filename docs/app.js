@@ -655,7 +655,14 @@
       var stayBody = groups.map(function (g) {
         var rows = staying.filter(function (r) { return r.group === g[0]; });
         if (!rows.length) return '';
-        var inner = g[2] === 'sender' ? uniqueSenders(rows).map(function (s) { return senderRow(s); }).join('')
+        // highlighted on purpose but no signal either way: offer Newsletters with a tick, so a rule is one click
+        var quick = S.focus && g[0] === 'unknown';
+        var inner = g[2] === 'sender' ? uniqueSenders(rows).map(function (s) {
+            if (!quick) return senderRow(s);
+            var as = { kind: 'suggest', bucket: 'N', why: 'no clear signal - you highlighted it' };
+            S.assessments[s.address] = as;
+            return senderRow(s, { suggest: true, as: as });
+          }).join('')
           : rows.map(function (r) { return messageRow(r, g[2] === 'unkeep' ? 'unkeep' : '') + (S.editing === r.msg.from && rows.filter(function (x) { return x.msg.from === r.msg.from; })[0] === r ? editorHtml(r.msg.from, false) : ''); }).join('');
         return '<div class="sub">' + esc(g[1]) + ' · ' + rows.length + '</div>' + inner;
       }).join('');
