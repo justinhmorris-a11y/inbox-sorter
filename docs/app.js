@@ -142,6 +142,9 @@
 
   function replan() {
     var p = E.plan(S.messages, S.senders, S.rules, S.ctx, { now: new Date() });
+    if (S.focus) p.rows = p.rows.map(function (r) {   // you highlighted these on purpose: the safety net advises, it does not hold
+      return r.group === 'kept' && r.wouldBe ? Object.assign({}, r, { dest: r.wouldBe, group: 'file', why: 'you highlighted it (' + r.why + ')', markRead: !!(r.rule && r.rule.read && !r.msg.isRead) }) : r;
+    });
     S.rows = p.rows; S.assessments = p.assessments;
     render();
   }
@@ -458,7 +461,7 @@
     }
   }
   async function loadHighlighted(items, run) {
-    if (!S.focus) { S.focus = []; S.editing = null; showLoading('Looking at ' + items.length + ' highlighted emails...'); }
+    if (!S.focus) { S.focus = []; S.editing = null; S.open.stay = true; showLoading('Looking at ' + items.length + ' highlighted emails...'); }   // highlighted: the senders without a rule are the point, so show them
     var i = 0, found = [], seen = {};
     async function worker() {
       while (i < items.length) {
@@ -656,10 +659,10 @@
         var rows = staying.filter(function (r) { return r.group === g[0]; });
         if (!rows.length) return '';
         // highlighted on purpose but no signal either way: offer Newsletters with a tick, so a rule is one click
-        var quick = S.focus && g[0] === 'unknown';
+        var quick = S.focus && (g[0] === 'unknown' || g[0] === 'people');
         var inner = g[2] === 'sender' ? uniqueSenders(rows).map(function (s) {
             if (!quick) return senderRow(s);
-            var as = { kind: 'suggest', bucket: 'N', why: 'no clear signal - you highlighted it' };
+            var as = { kind: 'suggest', bucket: s.transN * 2 >= s.total ? 'R' : 'N', why: (g[0] === 'people' ? 'you have written to them, but you highlighted it' : 'no clear signal - you highlighted it') };
             S.assessments[s.address] = as;
             return senderRow(s, { suggest: true, as: as });
           }).join('')

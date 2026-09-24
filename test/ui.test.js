@@ -217,6 +217,15 @@ const assert = require('assert');
   await multi.evaluate(() => window.MockSelect([]));
   await multi.waitForFunction(() => /^Today/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
   console.log('selection cleared:', await sum());
+  // highlighted mail is filed even when the safety net would hold it: 'Payment declined' + a rule set from the tick
+  await multi.evaluate(() => window.MockSelect(['MOCK-11']));
+  await multi.evaluate(() => window.MockSelect(['MOCK-11', 'MOCK-21']));
+  await multi.waitForFunction(() => /^Highlighted · 2 emails/.test(document.getElementById('summary').textContent), null, { timeout: 10000 });
+  await multi.click('.row[data-addr="payments-messages@amazon.co.uk"] [data-act="approve"]');
+  const held = (await multi.textContent('#main')).replace(/\s+/g, ' ');
+  assert.ok(/you highlighted it \(subject looks like it needs action\)/.test(held), 'safety-net mail listed as filing with a note: ' + held.slice(0, 200));
+  assert.ok(/file 1 email/.test(await multi.textContent('#tidy')), 'Tidy offers it');
+  console.log('highlighted + safety net: filed with a note');
 
   await multi.close();
   // Outlook refusing the highlighted-emails call (older manifest) must not break the pane
