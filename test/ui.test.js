@@ -163,8 +163,8 @@ const assert = require('assert');
   await one.close();
   // big senders: count the whole inbox, list the busiest non-people without a rule, tick one
   const bg = await open();
-  assert.ok(/Find the big senders/.test(await bg.textContent('#main')), 'offer to count');
   await bg.click('[data-act="toggle"][data-key="big"]');   // folded by default
+  assert.ok(/Find the big senders/.test(await bg.textContent('#main')), 'offer to count');
   await bg.click('[data-act="big-scan"]');
   await bg.waitForFunction(() => /Counted \d+ emails/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
   const bgText = (await bg.textContent('#main')).replace(/\s+/g, ' ');

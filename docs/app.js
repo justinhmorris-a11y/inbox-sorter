@@ -14,7 +14,7 @@
     folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
     editing: null, domainFlag: {}, readFlag: {}, arrivalFlag: {}, subjectText: {}, subjectOn: {},
     arrival: null, arrivalTimer: null,   // arrival: last sync of the Outlook server rules { at, rules, senders, error } cardMore: false,
-    open: { suggest: true, file: true, stay: false, big: true }, openDest: {},
+    open: { suggest: true, file: true, stay: false, big: false }, openDest: {},
     big: null, bigBusy: false, bigAssess: {},   // big senders: the whole-inbox count (cached a week) and how each was assessed
     ruleSnapshot: null, toastTimer: null
   };
