@@ -226,6 +226,61 @@
     var b = E.splitCode(code).bucket;
     var label = (b === 'I' ? 'keep in inbox' : b === 'D' ? 'delete' : E.bucketName(b)) + (E.splitCode(code).read ? ', mark as read' : '') + (E.splitCode(code).arrival ? ', at arrival' : '');
     afterRuleChange(quiet ? null : senderName(address) + ': ' + label);
+    if (!quiet && b !== 'I') offerBacklog(address, b);
+  }
+
+  // "Ocado: Newsletters · 223 more in the inbox - File them": the rest of this sender's inbox mail, in one click.
+  async function offerBacklog(address, bucket) {
+    await new Promise(function (r) { setTimeout(r, 900); });   // let a range change / refresh settle first, so 'shown' is what is on screen
+    while (S.busy) await new Promise(function (r) { setTimeout(r, 300); });
+    if (E.ruleFor(S.rules, address) === null) return;   // rule undone meanwhile
+    var shown = S.messages.filter(function (m) { return m.from === address; }).length, total;
+    try { total = await G.inboxCountFrom(address); } catch (e) { return; }
+    var more = total - shown;
+    if (more < 1) return;
+    var label = bucket === 'D' ? 'delete' : bucket === 'J' ? 'junk' : 'file under ' + E.bucketName(bucket);
+    toast(senderName(address) + ': ' + plural(more, 'more email') + ' in the inbox from before', function () { sweepSender(address); }, 'File them');
+  }
+
+  async function sweepSender(address) {
+    if (S.busy) return;
+    S.busy = true; $('tidy').disabled = true; $('undo').disabled = true;
+    try {
+      var all = await G.listInboxFrom(address, function (n) { $('summary').textContent = 'Reading ' + senderName(address) + '... ' + n; });
+      var onScreen = {}; S.messages.forEach(function (m) { onScreen[m.id] = true; });   // what is shown stays for Tidy, where it can be looked at
+      all = all.filter(function (m) { return !onScreen[m.id]; });
+      var rows = E.plan(all, E.buildSenders(all), S.rules, S.ctx, { now: new Date() }).rows.filter(function (r) { return r.dest !== 'I'; });
+      S.busy = false;
+      if (!rows.length) { replan(); toast('Nothing more to file from ' + senderName(address), null); return; }
+      await tidy(rows);
+    } catch (err) { S.busy = false; setProgress(null); showError(err); }
+    finally { S.busy = false; }
+  }
+
+  // 2. the whole inbox: what the rules would do to every email, then do it
+  var sweepPlan = null;
+  async function planSweep() {
+    if (S.busy) return;
+    S.busy = true; render();
+    try {
+      var all = await G.listInboxAll(function (n) { $('summary').textContent = 'Reading the whole inbox... ' + n.toLocaleString(); });
+      var rows = E.plan(all, E.buildSenders(all), S.rules, S.ctx, { now: new Date() }).rows.filter(function (r) { return r.dest !== 'I'; });
+      var by = {}; rows.forEach(function (r) { by[r.dest] = (by[r.dest] || 0) + 1; });
+      sweepPlan = { at: Date.now(), scanned: all.length, rows: rows, by: by };
+    } catch (err) { showError(err); }
+    finally { S.busy = false; replan(); }
+  }
+  async function runSweep() {
+    if (!sweepPlan || S.busy) return;
+    var rows = sweepPlan.rows; sweepPlan = null;
+    await tidy(rows);
+  }
+  function sweepHtml() {
+    if (S.busy && !sweepPlan) return '';
+    if (!sweepPlan) return '<p class="hint">Your rules only touch the dates shown. <button class="link" data-act="sweep-plan">Sweep the whole inbox</button> to see what they would file from all of it.</p>';
+    var parts = Object.keys(sweepPlan.by).sort(function (a, b) { return sweepPlan.by[b] - sweepPlan.by[a]; }).map(function (k) { return E.bucketName(k) + ' ' + sweepPlan.by[k].toLocaleString(); });
+    return '<p class="hint">Of ' + sweepPlan.scanned.toLocaleString() + ' emails in the inbox your rules would file <b>' + sweepPlan.rows.length.toLocaleString() + '</b>: ' + esc(parts.join(' · ')) + '. Recent mail that looks like it needs you stays. '
+      + '<button class="link" data-act="sweep-run">File them</button> <button class="link" data-act="sweep-cancel">Not now</button></p>';
   }
 
   function clearRule(address) {
@@ -498,6 +553,7 @@
       S.busy = false;
       replan();
       toast('Filed ' + plural(result.moved.length, 'email') + (result.failed ? ' (' + result.failed + ' could not be moved)' : ''), undo, 'Undo');
+      if (S.big && result.moved.length > 50) { S.big = null; G.local.remove('is.big.v1'); }   // the counts are stale now
     } catch (err) { S.busy = false; setProgress(null); showError(err); }
     finally { S.busy = false; }
   }
@@ -717,7 +773,7 @@
         var bigHead = S.bigBusy ? '<p class="hint">Counting every email in the inbox... this takes a few minutes the first time.</p>'
           : !S.big ? '<p class="hint">See who sends you the most, across the whole inbox, and set rules for them in one tick. <button class="link" data-act="big-scan">Find the big senders</button></p>'
           : '<p class="hint">Counted ' + S.big.scanned.toLocaleString() + ' emails' + (stale ? ' over a week ago' : '') + '. <button class="link" data-act="big-scan">Count again</button></p>';
-        html += section('big', 'Big senders', S.big ? bigList.length : '', bigHead, bigList.join(''));
+        html += section('big', 'Big senders', S.big ? bigList.length : '', bigHead + sweepHtml(), bigList.join(''));
       }
       // 2. ready to file
       var byDest = {}, order = [];
@@ -806,6 +862,9 @@
       else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest === c; }).length <= 15; S.openDest[c] = !cur; render(); }
       else if (act === 'approve') { setRule(address, (S.assessments[address] || S.bigAssess[address]).bucket); }
       else if (act === 'big-scan') { scanBigSenders(); }
+      else if (act === 'sweep-plan') { planSweep(); }
+      else if (act === 'sweep-run') { runSweep(); }
+      else if (act === 'sweep-cancel') { sweepPlan = null; render(); }
       else if (act === 'reject') { setRule(address, 'I'); }
       else if (act === 'approve-all') { approveAll(); }
       else if (act === 'edit') { S.editing = S.editing === address ? null : address; render(); }

@@ -123,6 +123,27 @@ const assert = require('assert');
   console.log('subject rule: set on Ross/Demo booked, filed 2, other mail untouched, removed');
 
   await sj.close();
+  // after a rule on Sports Direct (3 in the inbox, 1 shown today) the toast offers the other 2; 'File them' moves just those
+  const bl = await open();
+  await bl.evaluate(() => window.MockOpen('ross@example-colleague.com', 'Ross', 'RE: Keystone sprint planning', new Date()));   // a today email open, so no range widening
+  await bl.waitForFunction(() => /Ross/.test(document.querySelector('.card .who').textContent), null, { timeout: 10000 });
+  await bl.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
+  await bl.waitForFunction(() => /2 more emails in the inbox from before/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  await bl.click('#toast-undo');   // the toast's action button: 'File them'
+  await bl.waitForFunction(() => /Filed 2 emails/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  const blMoves = (await bl.evaluate(() => window.MockLog)).moves;
+  assert.deepStrictEqual(blMoves.map(m => m.to).sort(), ['F-Newsletters', 'F-Receipts'], 'the two older Sports Direct mails: newsletter + rescued order');
+  // sweep the whole inbox: plan, then run
+  await bl.click('[data-act="sweep-plan"]');
+  await bl.waitForFunction(() => /your rules would file/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
+  const planText = (await bl.textContent('#main')).replace(/\s+/g, ' ');
+  assert.ok(/would file 5:/.test(planText) || /would file \d+:/.test(planText), 'sweep plan shown: ' + planText.slice(0, 160));
+  await bl.click('[data-act="sweep-run"]');
+  await bl.waitForFunction(() => /Filed \d+ emails/.test(document.getElementById('toast').textContent), null, { timeout: 15000 });
+  const sweptTo = {}; (await bl.evaluate(() => window.MockLog)).moves.slice(2).forEach(m => sweptTo[m.to] = (sweptTo[m.to] || 0) + 1);
+  console.log('backlog: filed 2 older Sports Direct mails on the toast | sweep filed', JSON.stringify(sweptTo));
+  await bl.close();
+
   // 'File this one': the open email (Sports Direct 'New season arrivals', yesterday, MOCK-22) is filed alone while the pane shows Today
   const one = await open();
   await one.evaluate(() => window.MockOpen('donotreply@email.sportsdirect.com', 'Sports Direct', 'New season arrivals', new Date(Date.now() - 86400000), 'MOCK-22'));

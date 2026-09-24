@@ -60,6 +60,7 @@
       var headers = { Authorization: 'Bearer ' + token };
       if (options.immutable !== false) headers.Prefer = 'IdType="ImmutableId"' + (options.bodyText ? ', outlook.body-content-type="text"' : '');
       if (options.body) headers['Content-Type'] = 'application/json';
+      if (options.consistency) headers.ConsistencyLevel = 'eventual';
       var res;
       try { res = await fetch(url, { method: method, headers: headers, body: options.body ? JSON.stringify(options.body) : undefined }); }
       catch (networkError) {
@@ -109,6 +110,33 @@
     var filter = 'receivedDateTime ge ' + from.toISOString().slice(0, 19) + 'Z and receivedDateTime lt ' + to.toISOString().slice(0, 19) + 'Z';
     var url = '/me/mailFolders/inbox/messages?$select=id,from,sender,subject,receivedDateTime,isRead,flag,importance'
       + '&$filter=' + encodeURIComponent(filter) + '&$orderby=' + encodeURIComponent('receivedDateTime desc') + '&$top=200';
+    var out = [], seen = {};
+    while (url) {
+      var page = await call(url);
+      (page.value || []).forEach(function (m) { if (!seen[m.id]) { seen[m.id] = true; out.push(mapMessage(m)); } });
+      if (onProgress) onProgress(out.length);
+      url = page['@odata.nextLink'] || null;
+    }
+    return out;
+  }
+
+  var INBOX_SELECT = '$select=id,from,sender,subject,receivedDateTime,isRead,flag,importance,parentFolderId';
+  /** How many inbox emails come from this address. */
+  async function inboxCountFrom(address) {
+    var url = '/me/mailFolders/inbox/messages?$filter=' + encodeURIComponent("from/emailAddress/address eq '" + String(address).replace(/'/g, "''") + "'") + '&$count=true&$top=1&$select=id';
+    var page = await call(url, { consistency: true });
+    return typeof page['@odata.count'] === 'number' ? page['@odata.count'] : (page.value || []).length;
+  }
+  /** Every inbox email from this address. */
+  async function listInboxFrom(address, onProgress) {
+    var url = '/me/mailFolders/inbox/messages?$filter=' + encodeURIComponent("from/emailAddress/address eq '" + String(address).replace(/'/g, "''") + "'") + '&' + INBOX_SELECT + '&$top=500';
+    return pageAll(url, onProgress);
+  }
+  /** The whole inbox, newest first. */
+  async function listInboxAll(onProgress) {
+    return pageAll('/me/mailFolders/inbox/messages?' + INBOX_SELECT + '&$orderby=' + encodeURIComponent('receivedDateTime desc') + '&$top=1000', onProgress);
+  }
+  async function pageAll(url, onProgress) {
     var out = [], seen = {};
     while (url) {
       var page = await call(url);
@@ -294,7 +322,7 @@
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
     initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo, senderCounts: senderCounts,
-    moveMessage: moveMessage, setRead: setRead, wellKnownFolderId: wellKnownFolderId, listRules: listRules, createRule: createRule, deleteRule: deleteRule, listFolders: listFolders, createFolder: createFolder,
+    moveMessage: moveMessage, setRead: setRead, inboxCountFrom: inboxCountFrom, listInboxFrom: listInboxFrom, listInboxAll: listInboxAll, wellKnownFolderId: wellKnownFolderId, listRules: listRules, createRule: createRule, deleteRule: deleteRule, listFolders: listFolders, createFolder: createFolder,
     local: local, loadRules: loadRules, saveRules: saveRules
   };
 })(typeof self !== 'undefined' ? self : this);
