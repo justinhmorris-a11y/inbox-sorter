@@ -437,7 +437,8 @@
       as = Object.assign({}, as, { why: plural(s.total, 'email') + ' · ' + s.unread + ' unread · ' + s.last90 + ' in the last 90 days · ' + as.why });
       S.bigAssess[s.address] = as;
       // two rows with the same name (Ocado marketing vs Ocado deliveries): show the address so they can be told apart
-      var shown = names[s.name] > 1 ? s.name + ' <' + s.address + '>' : s.name;
+      var generic = /^(no-?reply|do-?not-?reply|noreply|notifications?|info|mail|email|newsletter|support|hello|team|admin)$/i.test(String(s.name).trim());
+      var shown = generic ? s.address : (names[s.name] > 1 ? s.name + ' <' + s.address + '>' : s.name);
       return senderRow(Object.assign({}, s, { name: shown, latest: s.latest || { subject: '' } }), { suggest: true, as: as, tag: plural(s.total, 'email') + (s.unread ? ', ' + s.unread + ' unread' : '') });
     });
   }
@@ -766,15 +767,6 @@
           '<p class="hint">Tick to approve, cross to keep that sender in the inbox. <button class="link" data-act="approve-all">Approve all</button></p>',
           sug.map(function (s) { return senderRow(s, { suggest: true }); }).join(''));
       }
-      // 1b. big senders across the whole inbox
-      if (!S.focus) {
-        var stale = S.big && (Date.now() - S.big.at) > BIG_TTL_DAYS * 86400000;
-        var bigList = S.big ? bigRows() : [];
-        var bigHead = S.bigBusy ? '<p class="hint">Counting every email in the inbox... this takes a few minutes the first time.</p>'
-          : !S.big ? '<p class="hint">See who sends you the most, across the whole inbox, and set rules for them in one tick. <button class="link" data-act="big-scan">Find the big senders</button></p>'
-          : '<p class="hint">Counted ' + S.big.scanned.toLocaleString() + ' emails' + (stale ? ' over a week ago' : '') + '. <button class="link" data-act="big-scan">Count again</button></p>';
-        html += section('big', 'Big senders', S.big ? bigList.length : '', bigHead + sweepHtml(), bigList.join(''));
-      }
       // 2. ready to file
       var byDest = {}, order = [];
       filing.forEach(function (r) { if (!byDest[r.dest]) { byDest[r.dest] = []; order.push(r.dest); } byDest[r.dest].push(r); });
@@ -809,6 +801,15 @@
       }).join('');
       var stayCount = staying.filter(function (r) { return r.group !== 'suggest'; }).length;
       if (stayCount) html += section('stay', 'Staying in the inbox', stayCount, '', stayBody);
+      // 4. big senders across the whole inbox (folded away: a once-in-a-while tool)
+      if (!S.focus) {
+        var stale = S.big && (Date.now() - S.big.at) > BIG_TTL_DAYS * 86400000;
+        var bigList = S.big ? bigRows() : [];
+        var bigHead = S.bigBusy ? '<p class="hint">Counting every email in the inbox... this takes a few minutes the first time.</p>'
+          : !S.big ? '<p class="hint">See who sends you the most, across the whole inbox, and set rules for them in one tick. <button class="link" data-act="big-scan">Find the big senders</button></p>'
+          : '<p class="hint">Counted ' + S.big.scanned.toLocaleString() + ' emails' + (stale ? ' over a week ago' : '') + '. <button class="link" data-act="big-scan">Count again</button></p>';
+        html += section('big', 'Big senders', S.big ? bigList.length : '', bigHead + sweepHtml(), bigList.join(''));
+      }
     }
 
     main.innerHTML = html;

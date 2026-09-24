@@ -134,6 +134,7 @@ const assert = require('assert');
   const blMoves = (await bl.evaluate(() => window.MockLog)).moves;
   assert.deepStrictEqual(blMoves.map(m => m.to).sort(), ['F-Newsletters', 'F-Receipts'], 'the two older Sports Direct mails: newsletter + rescued order');
   // sweep the whole inbox: plan, then run
+  await bl.click('[data-act="toggle"][data-key="big"]');
   await bl.click('[data-act="sweep-plan"]');
   await bl.waitForFunction(() => /your rules would file/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
   const planText = (await bl.textContent('#main')).replace(/\s+/g, ' ');
@@ -163,6 +164,7 @@ const assert = require('assert');
   // big senders: count the whole inbox, list the busiest non-people without a rule, tick one
   const bg = await open();
   assert.ok(/Find the big senders/.test(await bg.textContent('#main')), 'offer to count');
+  await bg.click('[data-act="toggle"][data-key="big"]');   // folded by default
   await bg.click('[data-act="big-scan"]');
   await bg.waitForFunction(() => /Counted \d+ emails/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
   const bgText = (await bg.textContent('#main')).replace(/\s+/g, ' ');
