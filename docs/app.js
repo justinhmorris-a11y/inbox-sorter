@@ -270,17 +270,21 @@
     } catch (err) { showError(err); }
     finally { S.busy = false; replan(); }
   }
-  async function runSweep() {
+  // code: one destination only (e.g. 'J' = just the junk), or nothing for all of it
+  async function runSweep(code) {
     if (!sweepPlan || S.busy) return;
-    var rows = sweepPlan.rows; sweepPlan = null;
+    var rows = code ? sweepPlan.rows.filter(function (r) { return r.dest === code; }) : sweepPlan.rows;
+    if (code) { sweepPlan.rows = sweepPlan.rows.filter(function (r) { return r.dest !== code; }); delete sweepPlan.by[code]; if (!sweepPlan.rows.length) sweepPlan = null; }
+    else sweepPlan = null;
     await tidy(rows);
   }
   function sweepHtml() {
     if (S.busy && !sweepPlan) return '';
     if (!sweepPlan) return '<p class="hint">Your rules only touch the dates shown. <button class="link" data-act="sweep-plan">Sweep the whole inbox</button> to see what they would file from all of it.</p>';
-    var parts = Object.keys(sweepPlan.by).sort(function (a, b) { return sweepPlan.by[b] - sweepPlan.by[a]; }).map(function (k) { return E.bucketName(k) + ' ' + sweepPlan.by[k].toLocaleString(); });
-    return '<p class="hint">Of ' + sweepPlan.scanned.toLocaleString() + ' emails in the inbox your rules would file <b>' + sweepPlan.rows.length.toLocaleString() + '</b>: ' + esc(parts.join(' · ')) + '. Recent mail that looks like it needs you stays. '
-      + '<button class="link" data-act="sweep-run">File them</button> <button class="link" data-act="sweep-cancel">Not now</button></p>';
+    var codes = Object.keys(sweepPlan.by).sort(function (a, b) { return sweepPlan.by[b] - sweepPlan.by[a]; });
+    var buttons = codes.map(function (k) { return '<button class="link" data-act="sweep-run" data-code="' + esc(k) + '">' + esc(E.bucketName(k)) + ' ' + sweepPlan.by[k].toLocaleString() + '</button>'; }).join(' ');
+    return '<p class="hint">Of ' + sweepPlan.scanned.toLocaleString() + ' emails in the inbox your rules would file <b>' + sweepPlan.rows.length.toLocaleString() + '</b>. Recent mail that looks like it needs you stays. File: '
+      + buttons + (codes.length > 1 ? ' <button class="link" data-act="sweep-run">All ' + sweepPlan.rows.length.toLocaleString() + '</button>' : '') + ' <button class="link" data-act="sweep-cancel">Not now</button></p>';
   }
 
   function clearRule(address) {
@@ -864,7 +868,7 @@
       else if (act === 'approve') { setRule(address, (S.assessments[address] || S.bigAssess[address]).bucket); }
       else if (act === 'big-scan') { scanBigSenders(); }
       else if (act === 'sweep-plan') { planSweep(); }
-      else if (act === 'sweep-run') { runSweep(); }
+      else if (act === 'sweep-run') { runSweep(el.getAttribute('data-code') || null); }
       else if (act === 'sweep-cancel') { sweepPlan = null; render(); }
       else if (act === 'reject') { setRule(address, 'I'); }
       else if (act === 'approve-all') { approveAll(); }

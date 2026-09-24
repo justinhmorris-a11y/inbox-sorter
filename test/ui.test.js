@@ -138,9 +138,15 @@ const assert = require('assert');
   await bl.click('[data-act="sweep-plan"]');
   await bl.waitForFunction(() => /your rules would file/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
   const planText = (await bl.textContent('#main')).replace(/\s+/g, ' ');
-  assert.ok(/would file 5:/.test(planText) || /would file \d+:/.test(planText), 'sweep plan shown: ' + planText.slice(0, 160));
-  await bl.click('[data-act="sweep-run"]');
-  await bl.waitForFunction(() => /Filed \d+ emails/.test(document.getElementById('toast').textContent), null, { timeout: 15000 });
+  assert.ok(/would file \d+\. Recent mail/.test(planText) && /Junk \d+/.test(planText), 'sweep plan shown: ' + planText.slice(0, 160));
+  // junk only first: only junk moves, the rest of the plan stays offered
+  await bl.click('[data-act="sweep-run"][data-code="J"]');
+  await bl.waitForFunction(() => window.MockLog.moves.length >= 3 && /Filed 1 email/.test(document.getElementById('toast').textContent), null, { timeout: 15000 });
+  const junkOnly = (await bl.evaluate(() => window.MockLog)).moves.slice(2);
+  assert.ok(junkOnly.length >= 1 && junkOnly.every(m => m.to === 'junkemail'), 'junk-only sweep moved only to junk: ' + JSON.stringify(junkOnly));
+  assert.ok(/your rules would file/.test(await bl.textContent('#main')), 'remaining plan still offered');
+  await bl.click('[data-act="sweep-run"]:not([data-code])');
+  await bl.waitForFunction(() => window.MockLog.moves.length >= 5 && !/your rules would file/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
   const sweptTo = {}; (await bl.evaluate(() => window.MockLog)).moves.slice(2).forEach(m => sweptTo[m.to] = (sweptTo[m.to] || 0) + 1);
   console.log('backlog: filed 2 older Sports Direct mails on the toast | sweep filed', JSON.stringify(sweptTo));
   await bl.close();
