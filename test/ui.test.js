@@ -129,6 +129,22 @@ const assert = require('assert');
   console.log('file this one: moved', oneMoves[0].id, 'to', oneMoves[0].to, 'while the pane showed Today');
 
   await one.close();
+  // safety net override: 'Payment declined' from Amazon Payments is kept even with a Receipts rule; 'File anyway' files just that one
+  const fa = await open();
+  await fa.click('[data-act="toggle"][data-key="stay"]');
+  await fa.click('.row[data-addr="payments-messages@amazon.co.uk"] [data-act="edit"]');
+  await fa.click('.editor[data-addr="payments-messages@amazon.co.uk"] [data-code="R"]');
+  await fa.click('.editor[data-addr="payments-messages@amazon.co.uk"] [data-act="close"]');
+  const faRow = fa.locator('.row.msg', { hasText: 'Payment declined' });
+  assert.ok(/subject looks like it needs action/.test(await faRow.textContent()), 'kept by the safety net');
+  const faBefore = (await fa.evaluate(() => window.MockLog)).moves.length;
+  await faRow.locator('[data-act="file-anyway"]').click();
+  await fa.waitForFunction(() => /Filed 1 email/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  const faMoves = (await fa.evaluate(() => window.MockLog)).moves;
+  assert.strictEqual(faMoves.length - faBefore, 1, 'exactly one email moved'); assert.strictEqual(faMoves[faMoves.length - 1].to, 'F-Receipts');
+  console.log('file anyway: safety-net email filed to', faMoves[faMoves.length - 1].to, '| others untouched');
+  await fa.close();
+
   // 'mark as read' tick box: Sports Direct newsletters get filed AND marked read; undo restores unread
   const rd = await open();
   await rd.selectOption('#range', '7');

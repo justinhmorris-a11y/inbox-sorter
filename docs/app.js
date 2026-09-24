@@ -525,7 +525,8 @@
   function messageRow(r, action) {
     var m = r.msg, a = m.from;
     var link = action === 'keep' ? '<button class="link" data-act="keep" title="Leave this one email in the inbox">Keep</button>'
-      : action === 'unkeep' ? '<button class="link" data-act="unkeep">File it</button>' : '';
+      : action === 'unkeep' ? '<button class="link" data-act="unkeep">File it</button>'
+      : r.group === 'kept' && r.wouldBe ? '<button class="link" data-act="file-anyway" title="You have seen it: file this one under ' + esc(E.bucketName(r.wouldBe)) + ' now">File anyway</button>' : '';
     if (r.rule && r.rule.scope === 'subject' && r.why === 'your rule') r = Object.assign({}, r, { why: 'your rule for "' + r.rule.has + '"' });
     var note = r.group !== 'file' || r.why !== 'your rule' ? '<div class="why">' + esc(r.why) + (r.wouldBe ? ' · otherwise ' + esc(E.bucketName(r.wouldBe)) : '') + (r.markRead ? ' · will be marked read' : '') + '</div>' : (r.markRead ? '<div class="why">will be marked read</div>' : '');
     return '<div class="row msg slim" data-addr="' + esc(a) + '" data-id="' + esc(m.id) + '" title="' + esc(a) + '"><div class="text">'
@@ -651,6 +652,7 @@
       else if (act === 'range') { var sel = $('range'); sel.value = el.getAttribute('data-range'); sel.dispatchEvent(new Event('change')); }
       else if (act === 'file-these') { tidy(rowsForSelected()); }
       else if (act === 'file-one') { fileSelectedOne(); }
+      else if (act === 'file-anyway') { var kr = S.rows.filter(function (r) { return r.msg.id === id && r.group === 'kept' && r.wouldBe; })[0]; if (kr) tidy([Object.assign({}, kr, { dest: kr.wouldBe, markRead: !!(kr.rule && kr.rule.read && !kr.msg.isRead) })]); }
       else if (act === 'retry') { boot().catch(showError); }
     });
 
