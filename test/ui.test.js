@@ -30,6 +30,10 @@ const assert = require('assert');
   // the rule store: first run creates the hidden folder + draft message; edits are written there
   await page.waitForFunction(() => (window.MockLog.storeWrites || 0) >= 1, null, { timeout: 10000 });
   assert.ok(log0Created = (await page.evaluate(() => window.MockLog.created)).includes('Inbox Sorter (data)'), 'hidden data folder created');
+  // apply at arrival: the seeded Delete (golfbreaks) and Junk (epsa) rules become Outlook rules on first load
+  await page.waitForFunction(() => /At arrival: 2 Outlook rules/.test(document.getElementById('arrival').textContent), null, { timeout: 15000 });
+  let srv = await page.evaluate(() => window.MockLog.rules.map(r => r.displayName + ' -> ' + r.actions.moveToFolder + (r.actions.markAsRead ? ' read' : '')));
+  assert.deepStrictEqual(srv.sort(), ['Inbox Sorter: Delete (domains) -> WK-deleteditems', 'Inbox Sorter: Junk (domains) -> WK-junkemail'], 'server rules: ' + srv);
   // seeded rules (golfbreaks delete, epsa junk) should already be filing; nothing else moves
   let log = await page.evaluate(() => window.MockLog);
   assert.strictEqual(log.moves.length, 0, 'nothing moved just by opening');
@@ -193,6 +197,15 @@ const assert = require('assert');
   rdLog = await rd.evaluate(() => window.MockLog);
   assert.deepStrictEqual(rdLog.reads.filter(r => !r.isRead).map(r => r.id).sort(), readIds, 'undo marks the same mail unread again');
   console.log('mark as read: filed+read', readIds.length, '| undo restored unread');
+  // Sports Direct is now Newsletters + read: arrival defaults on, so an Outlook rule appears for it
+  await rd.waitForFunction(() => /At arrival: 3 Outlook rules/.test(document.getElementById('arrival').textContent), null, { timeout: 15000 });
+  const sdRule = (await rd.evaluate(() => window.MockLog.rules)).filter(r => /Newsletters, read/.test(r.displayName))[0];
+  assert.ok(sdRule && sdRule.conditions.fromAddresses[0].emailAddress.address === 'donotreply@email.sportsdirect.com' && sdRule.actions.markAsRead === true && sdRule.actions.moveToFolder === 'F-Newsletters', 'newsletters-read rule: ' + JSON.stringify(sdRule));
+  // untick 'apply when it arrives' on it: the Outlook rule goes, the Tidy rule stays
+  await rd.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="edit"]');
+  await rd.uncheck('.editor[data-addr="donotreply@email.sportsdirect.com"] [data-act="arrival"]');
+  await rd.waitForFunction(() => /At arrival: 2 Outlook rules/.test(document.getElementById('arrival').textContent), null, { timeout: 15000 });
+  console.log('apply at arrival: seeded rules synced, newsletters-read rule added, then removed on untick');
 
   await rd.close();
   // the open email is 3 days old: setting a rule on it widens the range to Last 7 days by itself, so Tidy can reach it

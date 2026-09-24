@@ -6,7 +6,7 @@
   'use strict';
 
   var GRAPH = 'https://graph.microsoft.com/v1.0';
-  var SCOPES = ['Mail.ReadWrite', 'User.Read'];
+  var SCOPES = ['Mail.ReadWrite', 'MailboxSettings.ReadWrite', 'User.Read'];
   var pca = null;
   var cached = { token: null, expires: 0 };
 
@@ -191,6 +191,21 @@
     return out;
   }
 
+  /** The real id of a well-known folder ('junkemail', 'deleteditems'): server rules need ids, not names. */
+  async function wellKnownFolderId(name) {
+    var f = await call('/me/mailFolders/' + name + '?$select=id');
+    return f.id;
+  }
+
+  // ---- Outlook server rules ("apply at arrival") -----------------------------------------------
+  async function listRules() {
+    var out = [], url = '/me/mailFolders/inbox/messageRules?$top=100';
+    while (url) { var page = await call(url); out = out.concat(page.value || []); url = page['@odata.nextLink'] || null; }
+    return out;
+  }
+  function createRule(rule) { return call('/me/mailFolders/inbox/messageRules', { method: 'POST', body: rule }); }
+  function deleteRule(id) { return call('/me/mailFolders/inbox/messageRules/' + encodeURIComponent(id), { method: 'DELETE' }); }
+
   async function createFolder(name) {
     var f = await call('/me/mailFolders', { method: 'POST', body: { displayName: name } });
     return { id: f.id, name: f.displayName };
@@ -279,7 +294,7 @@
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
     initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo, senderCounts: senderCounts,
-    moveMessage: moveMessage, setRead: setRead, listFolders: listFolders, createFolder: createFolder,
+    moveMessage: moveMessage, setRead: setRead, wellKnownFolderId: wellKnownFolderId, listRules: listRules, createRule: createRule, deleteRule: deleteRule, listFolders: listFolders, createFolder: createFolder,
     local: local, loadRules: loadRules, saveRules: saveRules
   };
 })(typeof self !== 'undefined' ? self : this);

@@ -77,7 +77,7 @@ assert.strictEqual(E.registrableDomain('amazon.co.uk'), 'amazon.co.uk');
 assert.deepStrictEqual(E.readHeaders([{ name: 'List-Unsubscribe', value: '<x>' }, { name: 'Auto-Submitted', value: 'no' }]), { unsub: true, bulk: false, auto: false, esp: false });
 // subject rules: sender + subject text, beat sender/domain rules, never touch the sender's other mail
 const subjRules = E.normaliseRules({ senders: { 'ross@dezrez.com': 'I' }, subjects: [{ from: 'ross@dezrez.com', has: 'demo booked', code: 'F:Demos*' }] });
-assert.deepStrictEqual(E.ruleFor(subjRules, 'ross@dezrez.com', 'Demo booked - Acme'), { bucket: 'F:Demos', read: true, scope: 'subject', key: 'ross@dezrez.com', has: 'demo booked' });
+assert.deepStrictEqual(E.ruleFor(subjRules, 'ross@dezrez.com', 'Demo booked - Acme'), { bucket: 'F:Demos', read: true, arrival: false, scope: 'subject', key: 'ross@dezrez.com', has: 'demo booked' });
 assert.strictEqual(E.ruleFor(subjRules, 'ross@dezrez.com', 'RE: Project sprint').scope, 'sender', 'other subjects fall through to the sender rule');
 assert.strictEqual(E.ruleFor(subjRules, 'ross@dezrez.com').scope, 'sender', 'no subject given: sender rule');
 assert.strictEqual(E.subjectRuleFor(subjRules, 'other@dezrez.com', 'Demo booked'), null, 'subject rule is per sender');
@@ -89,12 +89,23 @@ assert.strictEqual(by(p.rows, 'RE: Project').dest, 'I', 'colleague\'s normal mai
 assert.strictEqual(by(p.rows, 'Demo booked - URGENT').dest, 'I', 'safety net still applies to subject rules');
 assert.strictEqual(E.normaliseRules({ subjects: [{ from: 'x' }, null, { from: 'a@b.c', has: 'q', code: 'N' }] }).subjects.length, 1, 'broken subject rules dropped');
 
+// arrival flag: '^' on a code; defaults for junk / delete / read newsletters; one-off migration of old rules
+assert.deepStrictEqual(E.splitCode('N*^'), { bucket: 'N', read: true, arrival: true });
+assert.deepStrictEqual(E.splitCode('J^'), { bucket: 'J', read: false, arrival: true });
+assert.strictEqual(E.joinCode('N', true, true), 'N*^'); assert.strictEqual(E.joinCode('R', false, false), 'R'); assert.strictEqual(E.joinCode('I', true, true), 'I');
+assert.strictEqual(E.arrivalDefault('J', false), true); assert.strictEqual(E.arrivalDefault('N', false), false); assert.strictEqual(E.arrivalDefault('N', true), true); assert.strictEqual(E.arrivalDefault('R', true), false);
+const old = E.normaliseRules({ senders: { 'a@x.com': 'J', 'b@x.com': 'N*', 'c@x.com': 'N', 'd@x.com': 'R*' }, domains: { 'spam.com': 'D' }, subjects: [{ from: 'e@x.com', has: 'digest', code: 'N*' }] });
+assert.strictEqual(E.applyArrivalDefaults(old), true);
+assert.deepStrictEqual(old.senders, { 'a@x.com': 'J^', 'b@x.com': 'N*^', 'c@x.com': 'N', 'd@x.com': 'R*' }); assert.strictEqual(old.domains['spam.com'], 'D^'); assert.strictEqual(old.subjects[0].code, 'N*^'); assert.strictEqual(old.v, 2);
+assert.strictEqual(E.applyArrivalDefaults(old), false, 'runs once');
+assert.strictEqual(E.ruleFor(old, 'a@x.com').arrival, true); assert.strictEqual(E.ruleFor(old, 'c@x.com').arrival, false);
+
 // 'mark as read' flag: stored as a '*' suffix, stripped by ruleFor, surfaced as markRead only for unread mail that files
-assert.deepStrictEqual(E.splitCode('N*'), { bucket: 'N', read: true });
-assert.deepStrictEqual(E.splitCode('F:DezRez'), { bucket: 'F:DezRez', read: false });
+assert.deepStrictEqual(E.splitCode('N*'), { bucket: 'N', read: true, arrival: false });
+assert.deepStrictEqual(E.splitCode('F:DezRez'), { bucket: 'F:DezRez', read: false, arrival: false });
 assert.strictEqual(E.joinCode('N', true), 'N*'); assert.strictEqual(E.joinCode('I', true), 'I');
 const readRules = E.normaliseRules({ senders: { 'donotreply@email.sportsdirect.com': 'N*' }, domains: { 'golfbreaks.com': 'D' } });
-assert.deepStrictEqual(E.ruleFor(readRules, 'donotreply@email.sportsdirect.com'), { bucket: 'N', read: true, scope: 'sender', key: 'donotreply@email.sportsdirect.com' });
+assert.deepStrictEqual(E.ruleFor(readRules, 'donotreply@email.sportsdirect.com'), { bucket: 'N', read: true, arrival: false, scope: 'sender', key: 'donotreply@email.sportsdirect.com' });
 assert.strictEqual(E.ruleFor(readRules, 'info@emails.golfbreaks.com').read, false);
 p = E.plan(messages, senders, readRules, ctx, { now });
 assert.strictEqual(by(p.rows, 'Outlet savings').dest, 'N');

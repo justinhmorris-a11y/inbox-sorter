@@ -57,8 +57,8 @@
   var headers = { unsub: [{ name: 'List-Unsubscribe', value: '<x>' }] };
   var unsubSenders = { 'donotreply@email.sportsdirect.com': 1, 'friendupdates@facebookmail.com': 1, 'amazon-offers@amazon.co.uk': 1, 'info-uk@epsa.com': 1, 'info@emails.golfbreaks.com': 1, 'newsletter@progressiveguitar.example': 1 };
   var folders = [{ id: 'F-inbox', displayName: 'Inbox' }, { id: 'F-audit', displayName: 'Audit' }, { id: 'F-dez', displayName: 'DezRez' }, { id: 'F-hipz', displayName: 'Hipz' }, { id: 'F-ski', displayName: 'Ski erg' }, { id: 'F-trips', displayName: 'Trips' }];
-  var moved = {}, storeMsg = null;
-  global.MockLog = { moves: [], created: [], reads: [] };
+  var moved = {}, storeMsg = null, serverRules = [], ruleN = 0;
+  global.MockLog = { moves: [], created: [], reads: [], rules: serverRules };
 
   global.MockGraph = {
     handle: function (method, url, body) {
@@ -72,6 +72,10 @@
 
   function route(method, url, body) {
     var m;
+    if (method === 'GET' && /\/me\/mailFolders\/(junkemail|deleteditems)\?/.test(url)) { var wk = /mailFolders\/(\w+)\?/.exec(url)[1]; return { id: 'WK-' + wk }; }
+    if (method === 'GET' && /inbox\/messageRules/.test(url)) return { value: serverRules.slice() };
+    if (method === 'POST' && /inbox\/messageRules$/.test(url)) { var nr = Object.assign({ id: 'RULE-' + (++ruleN) }, body); serverRules.push(nr); return nr; }
+    if (method === 'DELETE' && (m = /inbox\/messageRules\/([^/?]+)$/.exec(url))) { for (var ri = serverRules.length - 1; ri >= 0; ri--) if (serverRules[ri].id === m[1]) serverRules.splice(ri, 1); return null; }
     if (/\/me\/mailFolders\?includeHiddenFolders/.test(url)) return { value: folders.filter(function (f) { return f.displayName === 'Inbox Sorter (data)'; }) };
     if (method === 'GET' && /F-Inbox Sorter \(data\)\/messages/.test(url)) return { value: storeMsg ? [storeMsg] : [] };
     if (method === 'POST' && /F-Inbox Sorter \(data\)\/messages$/.test(url)) { storeMsg = { id: 'STORE-1', subject: body.subject, body: body.body }; global.MockLog.storeWrites = (global.MockLog.storeWrites || 0) + 1; return storeMsg; }

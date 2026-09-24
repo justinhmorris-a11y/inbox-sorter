@@ -166,6 +166,8 @@ main { flex: 1; overflow-y: auto; padding: 0 0 12px; }
 .card.picked .row:hover { background: transparent; }
 .card.picked .editor { margin-left: 0; margin-right: 0; }
 .card.picked .hint { margin-top: 6px; }
+.arrival { margin: 0; padding: 4px 14px 0; font-size: 11px; color: var(--fg-3); }
+.arrival.err { color: var(--danger); }
 .card .hint { font-size: 12px; margin: 0 0 8px; padding: 6px 8px; border-radius: 4px; background: var(--surface-2); color: var(--fg); }
 .card .editor { margin: 0; padding: 0; border: 0; background: transparent; }
 .card .file-row { display: flex; gap: 6px; margin-top: 10px; }

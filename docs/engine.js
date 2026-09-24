@@ -92,9 +92,24 @@
     return out;
   }
 
-  // A stored code may end in '*' meaning 'mark as read when filed': 'N*' = Newsletters, read.
-  function splitCode(code) { var s = String(code || ''); var read = /\*$/.test(s); return { bucket: read ? s.slice(0, -1) : s, read: read }; }
-  function joinCode(bucket, read) { return read && bucket !== 'I' ? bucket + '*' : bucket; }
+  // A stored code may carry flags after the bucket: '*' = mark as read when filed, '^' = apply at arrival
+  // (an Outlook server rule, so the mail never reaches the Inbox). 'N*^' = Newsletters, read, at arrival.
+  function splitCode(code) {
+    var s = String(code || ''), read = false, arrival = false;
+    for (;;) { if (/\*$/.test(s)) { read = true; s = s.slice(0, -1); } else if (/\^$/.test(s)) { arrival = true; s = s.slice(0, -1); } else break; }
+    return { bucket: s, read: read, arrival: arrival };
+  }
+  function joinCode(bucket, read, arrival) { return bucket === 'I' ? bucket : bucket + (read ? '*' : '') + (arrival ? '^' : ''); }
+  // What arrival should default to for a rule nobody has chosen it for: junk and deletes always; newsletters only when marked read.
+  function arrivalDefault(bucket, read) { return bucket === 'J' || bucket === 'D' || (bucket === 'N' && !!read); }
+  // One-off: rules saved before arrival existed get the default. Returns true when anything changed.
+  function applyArrivalDefaults(rules) {
+    if ((rules.v || 1) >= 2) return false;
+    ['senders', 'domains'].forEach(function (k) { Object.keys(rules[k]).forEach(function (key) { var c = splitCode(rules[k][key]); rules[k][key] = joinCode(c.bucket, c.read, c.arrival || arrivalDefault(c.bucket, c.read)); }); });
+    (rules.subjects || []).forEach(function (r) { var c = splitCode(r.code); r.code = joinCode(c.bucket, c.read, c.arrival || arrivalDefault(c.bucket, c.read)); });
+    rules.v = 2;
+    return true;
+  }
 
   /** Subject rule for this sender + subject, or null. { from, has, code }: sender address, text the subject must contain (case-insensitive). */
   function subjectRuleFor(rules, address, subject) {
@@ -102,7 +117,7 @@
     var list = rules.subjects || [];
     for (var i = 0; i < list.length; i++) {
       var r = list[i];
-      if (r.from === a && s.indexOf(String(r.has).toLowerCase()) >= 0) { var c = splitCode(r.code); return { bucket: c.bucket, read: c.read, scope: 'subject', key: a, has: r.has }; }
+      if (r.from === a && s.indexOf(String(r.has).toLowerCase()) >= 0) { var c = splitCode(r.code); return { bucket: c.bucket, read: c.read, arrival: c.arrival, scope: 'subject', key: a, has: r.has }; }
     }
     return null;
   }
@@ -111,12 +126,12 @@
   function ruleFor(rules, address, subject) {
     var a = String(address || '').toLowerCase(), c;
     if (subject !== undefined) { var sr = subjectRuleFor(rules, a, subject); if (sr) return sr; }
-    if (rules.senders[a]) { c = splitCode(rules.senders[a]); return { bucket: c.bucket, read: c.read, scope: 'sender', key: a }; }
+    if (rules.senders[a]) { c = splitCode(rules.senders[a]); return { bucket: c.bucket, read: c.read, arrival: c.arrival, scope: 'sender', key: a }; }
     var p = addressParts(a);
     if (!p) return null;
     var d = p.domain;
     while (d) {
-      if (rules.domains[d]) { c = splitCode(rules.domains[d]); return { bucket: c.bucket, read: c.read, scope: 'domain', key: d }; }
+      if (rules.domains[d]) { c = splitCode(rules.domains[d]); return { bucket: c.bucket, read: c.read, arrival: c.arrival, scope: 'domain', key: d }; }
       var dot = d.indexOf('.');
       if (dot < 0) break;
       d = d.slice(dot + 1);
@@ -241,7 +256,7 @@
   }
 
   return {
-    rangeContaining: rangeContaining, splitCode: splitCode, joinCode: joinCode,
+    rangeContaining: rangeContaining, splitCode: splitCode, joinCode: joinCode, arrivalDefault: arrivalDefault, applyArrivalDefaults: applyArrivalDefaults,
     BUCKETS: BUCKETS, bucketName: bucketName, addressParts: addressParts, registrableDomain: registrableDomain,
     emptyRules: emptyRules, normaliseRules: normaliseRules, ruleFor: ruleFor, subjectRuleFor: subjectRuleFor, readHeaders: readHeaders,
     buildSenders: buildSenders, assessSender: assessSender, plan: plan,

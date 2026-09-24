@@ -12,7 +12,8 @@
     messages: [], senders: {}, rows: [], assessments: {},
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
     folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
-    editing: null, domainFlag: {}, readFlag: {}, subjectText: {}, subjectOn: {}, cardMore: false,
+    editing: null, domainFlag: {}, readFlag: {}, arrivalFlag: {}, subjectText: {}, subjectOn: {},
+    arrival: null, arrivalTimer: null,   // arrival: last sync of the Outlook server rules { at, rules, senders, error } cardMore: false,
     open: { suggest: true, file: true, stay: false, big: true }, openDest: {},
     big: null, bigBusy: false, bigAssess: {},   // big senders: the whole-inbox count (cached a week) and how each was assessed
     ruleSnapshot: null, toastTimer: null
@@ -64,7 +65,8 @@
     await G.initAuth();
     var loaded = await G.loadRules();
     S.rules = E.normaliseRules(loaded.rules || seedRules());
-    if (loaded.where !== 'store') G.saveRules(S.rules);   // first run, or rules still in the old 32 KB setting / local backup: move them into the mailbox store
+    var migrated = E.applyArrivalDefaults(S.rules);
+    if (loaded.where !== 'store' || migrated) G.saveRules(S.rules);   // first run, or rules still in the old 32 KB setting / local backup: move them into the mailbox store
     pruneKeep();
     S.me = await G.me();
     S.ctx.myDomains = S.me.domains;
@@ -74,6 +76,8 @@
     G.listFolders().then(function (f) { S.folders = f; }).catch(function () { /* loaded again on demand */ });
     watchSelection();
     await refresh();
+    S.arrival = G.local.get('is.arrival.v1');
+    scheduleArrivalSync(500);
   }
 
   async function ensurePeople() {
@@ -189,6 +193,12 @@
     return E.ruleFor(S.rules, address);
   }
 
+  function arrivalFlag(address) {
+    if (S.arrivalFlag[address] !== undefined) return S.arrivalFlag[address];
+    var r = cardRule(address);
+    return r ? !!r.arrival : null;   // null = no rule yet: the default for the bucket applies when one is chosen
+  }
+
   function readFlag(address) {
     if (S.readFlag[address] !== undefined) return S.readFlag[address];
     var r = cardRule(address);
@@ -197,7 +207,8 @@
 
   function setRule(address, code, quiet) {
     snapshot();
-    code = E.joinCode(E.splitCode(code).bucket, readFlag(address));
+    var bk = E.splitCode(code).bucket, rd = readFlag(address), av = arrivalFlag(address);
+    code = E.joinCode(bk, rd, av === null ? E.arrivalDefault(bk, rd) : av);
     var has = subjectFilter(address).trim();
     if (has) {
       S.rules.subjects = (S.rules.subjects || []).filter(function (r) { return !(r.from === address && r.has.toLowerCase() === has.toLowerCase()); });
@@ -213,7 +224,7 @@
     if (usesDomain(address) && canUseDomain(address)) S.rules.domains[dom] = code;
     else S.rules.senders[address] = code;
     var b = E.splitCode(code).bucket;
-    var label = (b === 'I' ? 'keep in inbox' : b === 'D' ? 'delete' : E.bucketName(b)) + (E.splitCode(code).read ? ', mark as read' : '');
+    var label = (b === 'I' ? 'keep in inbox' : b === 'D' ? 'delete' : E.bucketName(b)) + (E.splitCode(code).read ? ', mark as read' : '') + (E.splitCode(code).arrival ? ', at arrival' : '');
     afterRuleChange(quiet ? null : senderName(address) + ': ' + label);
   }
 
@@ -222,18 +233,19 @@
     var has = subjectFilter(address).trim();
     if (has) {
       S.rules.subjects = (S.rules.subjects || []).filter(function (r) { return !(r.from === address && r.has.toLowerCase() === has.toLowerCase()); });
-      delete S.readFlag[address]; delete S.subjectText[address]; delete S.subjectOn[address];
+      delete S.readFlag[address]; delete S.arrivalFlag[address]; delete S.subjectText[address]; delete S.subjectOn[address];
       afterRuleChange('Subject rule removed for ' + senderName(address));
       return;
     }
     var existing = E.ruleFor(S.rules, address);
     if (existing && existing.scope === 'domain') delete S.rules.domains[existing.key];
     delete S.rules.senders[address];
-    delete S.domainFlag[address]; delete S.readFlag[address];
+    delete S.domainFlag[address]; delete S.readFlag[address]; delete S.arrivalFlag[address];
     afterRuleChange('Rule removed for ' + senderName(address));
   }
 
   function afterRuleChange(message) {
+    scheduleArrivalSync(3000);
     G.saveRules(S.rules).then(function (r) {
       if (!r.ok) toast('Could not save your rules to the mailbox just now - they are kept on this PC and will be saved on the next change.', null);
     });
@@ -247,7 +259,74 @@
       }
     }
     if (!widened) replan();
-    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.subjectText = {}; S.subjectOn = {}; G.saveRules(S.rules); replan(); });
+    if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.arrivalFlag = {}; S.subjectText = {}; S.subjectOn = {}; G.saveRules(S.rules); replan(); scheduleArrivalSync(2000); });
+  }
+
+  // ------------------------------------------------------------------ Outlook server rules ("apply at arrival")
+  var RULE_PREFIX = 'Inbox Sorter: ', ADDRESSES_PER_RULE = 80;
+  function scheduleArrivalSync(ms) { clearTimeout(S.arrivalTimer); S.arrivalTimer = setTimeout(function () { syncArrivalRules().catch(function (e) { console.error(e); }); }, ms); }
+
+  // The Outlook rules the store asks for: one per (folder, read) group of addresses, chunked; one per domain group; one per subject rule.
+  async function desiredArrivalRules() {
+    var groups = {}, subjects = [], senders = 0;
+    function add(kind, bucket, read, value) { var k = kind + '|' + bucket + '|' + (read ? 1 : 0); (groups[k] = groups[k] || { kind: kind, bucket: bucket, read: read, values: [] }).values.push(value); }
+    Object.keys(S.rules.senders).forEach(function (a) { var c = E.splitCode(S.rules.senders[a]); if (c.arrival && c.bucket !== 'I') { add('from', c.bucket, c.read, a); senders++; } });
+    Object.keys(S.rules.domains).forEach(function (d) { var c = E.splitCode(S.rules.domains[d]); if (c.arrival && c.bucket !== 'I') { add('domain', c.bucket, c.read, '@' + d); senders++; } });
+    (S.rules.subjects || []).forEach(function (r) { var c = E.splitCode(r.code); if (c.arrival && c.bucket !== 'I') { subjects.push({ from: r.from, has: r.has, bucket: c.bucket, read: c.read }); senders++; } });
+    var folderIds = {};
+    async function fid(bucket) {
+      if (folderIds[bucket]) return folderIds[bucket];
+      var id = await folderIdFor(bucket);
+      if (id === 'junkemail' || id === 'deleteditems') id = await G.wellKnownFolderId(id);
+      return (folderIds[bucket] = id);
+    }
+    var out = [];
+    for (var k in groups) {
+      var g = groups[k], name = E.bucketName(g.bucket) + (g.read ? ', read' : '') + (g.kind === 'domain' ? ' (domains)' : '');
+      var vals = g.values.sort(), chunks = [];
+      for (var i = 0; i < vals.length; i += ADDRESSES_PER_RULE) chunks.push(vals.slice(i, i + ADDRESSES_PER_RULE));
+      for (var c = 0; c < chunks.length; c++) {
+        var conditions = g.kind === 'domain' ? { senderContains: chunks[c] } : { fromAddresses: chunks[c].map(function (a) { return { emailAddress: { address: a } }; }) };
+        out.push({ displayName: RULE_PREFIX + name + (chunks.length > 1 ? ' ' + (c + 1) + '/' + chunks.length : ''), sequence: 1, isEnabled: true, conditions: conditions, actions: { moveToFolder: await fid(g.bucket), markAsRead: !!g.read, stopProcessingRules: true } });
+      }
+    }
+    for (var s = 0; s < subjects.length; s++) {
+      var sr = subjects[s];
+      out.push({ displayName: RULE_PREFIX + '"' + sr.has + '" from ' + sr.from, sequence: 1, isEnabled: true, conditions: { fromAddresses: [{ emailAddress: { address: sr.from } }], subjectContains: [sr.has] }, actions: { moveToFolder: await fid(sr.bucket), markAsRead: !!sr.read, stopProcessingRules: true } });
+    }
+    return { rules: out, senders: senders };
+  }
+
+  function ruleSignature(r) {
+    var c = r.conditions || {}, a = r.actions || {};
+    return JSON.stringify([r.displayName, (c.fromAddresses || []).map(function (x) { return x.emailAddress.address.toLowerCase(); }).sort(), (c.senderContains || []).map(function (x) { return x.toLowerCase(); }).sort(), (c.subjectContains || []).map(function (x) { return x.toLowerCase(); }), a.moveToFolder, !!a.markAsRead]);
+  }
+
+  /** Make Outlook's rules match the store: add what is missing, remove what is no longer wanted, leave the rest. Only rules named 'Inbox Sorter: ...' are ever touched. */
+  async function syncArrivalRules() {
+    if (S.focus === undefined) return;
+    try {
+      var want = await desiredArrivalRules();
+      var have = (await G.listRules()).filter(function (r) { return String(r.displayName || '').indexOf(RULE_PREFIX) === 0; });
+      var wantSig = {}; want.rules.forEach(function (r) { wantSig[ruleSignature(r)] = r; });
+      var keep = {}, removed = 0, added = 0;
+      for (var i = 0; i < have.length; i++) { var sig = ruleSignature(have[i]); if (wantSig[sig] && !keep[sig]) keep[sig] = true; else { await G.deleteRule(have[i].id); removed++; } }
+      for (var j = 0; j < want.rules.length; j++) { var s2 = ruleSignature(want.rules[j]); if (!keep[s2]) { await G.createRule(want.rules[j]); added++; } }
+      S.arrival = { at: Date.now(), rules: want.rules.length, senders: want.senders, added: added, removed: removed, error: null };
+    } catch (e) {
+      S.arrival = Object.assign({}, S.arrival || {}, { error: (e && e.message) || String(e) });
+    }
+    G.local.set('is.arrival.v1', S.arrival);
+    renderArrivalStatus();
+  }
+
+  function renderArrivalStatus() {
+    var el = $('arrival'); if (!el) return;
+    var a = S.arrival;
+    if (!a) { el.textContent = ''; return; }
+    if (a.error) { el.textContent = 'Outlook rules not updated: ' + a.error; el.className = 'arrival err'; return; }
+    el.className = 'arrival';
+    el.textContent = a.rules ? 'At arrival: ' + plural(a.rules, 'Outlook rule') + ' covering ' + plural(a.senders, 'sender') + ' · updated ' + new Date(a.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'At arrival: no Outlook rules yet';
   }
 
   // ------------------------------------------------------------------ big senders (whole inbox)
@@ -441,7 +520,7 @@
   // ------------------------------------------------------------------ selected email
   function readSelection() {
     try {
-      S.cardMore = false; S.subjectText = {}; S.subjectOn = {}; S.readFlag = {};
+      S.cardMore = false; S.subjectText = {}; S.subjectOn = {}; S.readFlag = {}; S.arrivalFlag = {};
       var item = Office.context.mailbox.item;
       if (item && item.from && item.from.emailAddress) {
         S.selected = { address: String(item.from.emailAddress).toLowerCase(), name: item.from.displayName || '', subject: item.subject || '', received: item.dateTimeCreated ? new Date(item.dateTimeCreated) : null, itemId: item.itemId || null };
@@ -513,14 +592,16 @@
     var subjectLine = inCard && S.selected ? '<label class="line subj"><input type="checkbox" data-act="subject-on"' + (subjOn ? ' checked' : '') + '> Only when the subject has</label>'
       + '<div class="line subj-text"><input type="text" data-act="subject" value="' + esc(subjTxt) + '"' + (subjOn ? '' : ' disabled') + ' title="Rule applies only to this sender\'s emails whose subject contains this text"></div>' : '';
     var readLine = '<label class="line"><input type="checkbox" data-act="read"' + (readFlag(address) ? ' checked' : '') + '> Mark as read when filed</label>';
-    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + subjectLine + domainLine + readLine;
-    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address) || subjOn;
+    var avOn = arrivalFlag(address); if (avOn === null) avOn = E.arrivalDefault(current || 'N', readFlag(address));
+    var arrivalLine = '<label class="line" title="An Outlook rule on the server files this the moment it arrives, before you see it - on the web and phone too. Without it, Tidy files it."><input type="checkbox" data-act="arrival"' + (avOn ? ' checked' : '') + '> Apply when it arrives (never reaches the Inbox)</label>';
+    var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + subjectLine + domainLine + readLine + arrivalLine;
+    var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address) || subjOn || arrivalFlag(address);
     return '<div class="editor" data-addr="' + esc(address) + '">'
       + (inCard ? (has.trim() ? '<p class="label">Mail from this sender with "' + esc(has.trim()) + '" in the subject goes to:</p>' : '') : '<p class="label">Mail from ' + esc(address) + ' always goes to:</p>')
       + '<div class="chips">' + chips + '</div>'
       + (showExtras ? extras : '')
       + '<div class="foot">' + (rule ? '<button class="link" data-act="clear">Remove rule</button>' : '<span></span>')
-      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder, domain, subject, mark as read...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
+      + (inCard ? (showExtras ? '' : '<button class="link" data-act="card-more">Folder, domain, subject, read, at arrival...</button>') : '<button class="link" data-act="close">Done</button>') + '</div></div>';
   }
 
   function focusCard() {
@@ -531,7 +612,7 @@
     if (S.focus) return focusCard();
     if (!S.selected) return '';
     var a = S.selected.address, rule = cardRule(a), state;
-    if (rule) state = (rule.scope === 'subject' ? 'Your rule: "' + rule.has + '" from this sender ' : 'Your rule: always ') + (rule.bucket === 'I' ? (rule.scope === 'subject' ? 'stays in the inbox' : 'keep in the inbox') : (rule.bucket === 'D' ? 'delete' : (rule.scope === 'subject' ? 'goes to ' : 'file under ') + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '') + (rule.read ? ', mark as read' : '');
+    if (rule) state = (rule.scope === 'subject' ? 'Your rule: "' + rule.has + '" from this sender ' : 'Your rule: always ') + (rule.bucket === 'I' ? (rule.scope === 'subject' ? 'stays in the inbox' : 'keep in the inbox') : (rule.bucket === 'D' ? 'delete' : (rule.scope === 'subject' ? 'goes to ' : 'file under ') + E.bucketName(rule.bucket))) + (rule.scope === 'domain' ? ' (all of ' + rule.key + ')' : '') + (rule.read ? ', mark as read' : '') + (rule.arrival ? ', at arrival' : '');
     else if (subjectFilter(a).trim()) state = 'No rule yet for "' + subjectFilter(a).trim() + '" from this sender - pick where it goes';
     else {
       var as = S.assessments[a] || (E.addressParts(a) ? E.assessSender({ address: a, total: 1, transN: 0 }, S.ctx) : { kind: 'unknown' });
@@ -682,6 +763,7 @@
     $('tidy').textContent = filing.length ? 'Tidy now · file ' + plural(filing.length, 'email') : 'Tidy now';
     var last = G.local.get('is.undo.v1');
     $('undo').disabled = !(last && last.ids && last.ids.length) || S.busy;
+    renderArrivalStatus();
   }
 
   function showLoading(text) { $('main').innerHTML = '<div class="state-box"><div class="spinner"></div><p>' + esc(text) + '</p></div>'; $('summary').textContent = ''; }
@@ -717,7 +799,7 @@
       var el = e.target.closest('[data-act]');
       if (!el) return;
       var act = el.getAttribute('data-act');
-      if (act === 'domain' || act === 'folder' || act === 'read' || act === 'subject' || act === 'subject-on') return;   // handled by 'change' / 'input'
+      if (act === 'domain' || act === 'folder' || act === 'read' || act === 'arrival' || act === 'subject' || act === 'subject-on') return;   // handled by 'change' / 'input'
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
@@ -753,6 +835,11 @@
       else if (act === 'subject') {
         S.subjectText[address] = el.value; delete S.readFlag[address];
         render();
+      }
+      else if (act === 'arrival') {
+        S.arrivalFlag[address] = el.checked;
+        var ar = cardRule(address);
+        if (ar) setRule(address, ar.bucket); else render();
       }
       else if (act === 'read') {
         S.readFlag[address] = el.checked;
