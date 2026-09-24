@@ -640,7 +640,7 @@
       var rank = { R: 1, T: 2, N: 3, J: 8, D: 9 };
       order.sort(function (a, b) { return (rank[a] || 5) - (rank[b] || 5); });
       var fileBody = filing.length ? order.map(function (code) {
-        var open = S.openDest[code] !== undefined ? S.openDest[code] : filing.length <= 15;
+        var open = S.openDest[code] !== undefined ? S.openDest[code] : byDest[code].length <= 15;   // a big group starts folded: the count is the point, not the list
         return '<button class="section-head" style="padding-left:30px;font-weight:400" data-act="toggle-dest" data-code="' + esc(code) + '" aria-expanded="' + open + '">' + ICON.chev
           + pill(code) + '<span class="count">' + byDest[code].length + '</span></button>'
           + (open ? byDest[code].map(function (r) { return messageRow(r, 'keep') + (S.editing === r.msg.from && byDest[code].filter(function (x) { return x.msg.from === r.msg.from; })[0] === r ? editorHtml(r.msg.from, false) : ''); }).join('') : '');
@@ -717,7 +717,7 @@
       var holder = el.closest('[data-addr]'), address = holder && holder.getAttribute('data-addr');
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
-      else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest !== 'I'; }).length <= 15; S.openDest[c] = !cur; render(); }
+      else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest === c; }).length <= 15; S.openDest[c] = !cur; render(); }
       else if (act === 'approve') { setRule(address, (S.assessments[address] || S.bigAssess[address]).bucket); }
       else if (act === 'big-scan') { scanBigSenders(); }
       else if (act === 'reject') { setRule(address, 'I'); }
