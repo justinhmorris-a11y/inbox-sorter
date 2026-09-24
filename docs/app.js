@@ -5,7 +5,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var PUBLIC_DOMAINS = /^(gmail|googlemail|outlook|hotmail|live|msn|yahoo|icloud|me|aol|btinternet|sky|virginmedia|talktalk|protonmail|proton)\.(com|co\.uk|me|net)$/i;
-  var SENT_MAX = 3000, SENT_TTL_DAYS = 7, EVIDENCE_PER_REFRESH = 80;
+  var SENT_MAX = 3000, SENT_TTL_DAYS = 7, EVIDENCE_PER_REFRESH = 80, BIG_TTL_DAYS = 7, BIG_KEEP = 400, BIG_MIN = 5;
 
   var S = {
     range: 'today', busy: false, me: null,
@@ -13,7 +13,8 @@
     rules: E.emptyRules(), ctx: { sentTo: {}, myDomains: {}, evidence: {} },
     folders: [], selected: null, focus: null,   // focus: the emails highlighted in Outlook's list; while set, the pane shows and tidies only those
     editing: null, domainFlag: {}, readFlag: {}, subjectText: {}, subjectOn: {}, cardMore: false,
-    open: { suggest: true, file: true, stay: false }, openDest: {},
+    open: { suggest: true, file: true, stay: false, big: true }, openDest: {},
+    big: null, bigBusy: false, bigAssess: {},   // big senders: the whole-inbox count (cached a week) and how each was assessed
     ruleSnapshot: null, toastTimer: null
   };
 
@@ -67,6 +68,7 @@
     S.me = await G.me();
     S.ctx.myDomains = S.me.domains;
     S.ctx.evidence = G.local.get('is.evidence.v1') || {};
+    S.big = G.local.get('is.big.v1');
     await ensurePeople();
     G.listFolders().then(function (f) { S.folders = f; }).catch(function () { /* loaded again on demand */ });
     watchSelection();
@@ -147,7 +149,7 @@
   // ------------------------------------------------------------------ rules
   function domainOf(address) { var p = E.addressParts(address); return p ? E.registrableDomain(p.domain) : null; }
   function canUseDomain(address) { var d = domainOf(address); return !!d && !PUBLIC_DOMAINS.test(d); }
-  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; return address; }
+  function senderName(address) { var s = S.senders[address]; if (s) return s.name; if (S.selected && S.selected.address === address) return S.selected.name || address; var bg = (S.big && S.big.senders || []).filter(function (x) { return x.address === address; })[0]; if (bg) return bg.name; return address; }
 
   function usesDomain(address) {
     if (S.domainFlag[address] !== undefined) return S.domainFlag[address];
@@ -242,6 +244,64 @@
     }
     if (!widened) replan();
     if (message) toast(message, function () { S.rules = E.normaliseRules(JSON.parse(S.ruleSnapshot)); S.domainFlag = {}; S.readFlag = {}; S.subjectText = {}; S.subjectOn = {}; G.saveRules(S.rules); replan(); });
+  }
+
+  // ------------------------------------------------------------------ big senders (whole inbox)
+  async function scanBigSenders() {
+    if (S.bigBusy) return;
+    S.bigBusy = true; render();
+    try {
+      var r = await G.senderCounts(function (subject) { return E._rx.trans.test(subject || ''); }, function (n) { $('summary').textContent = 'Counting senders... ' + n + ' emails'; });
+      var list = Object.keys(r.senders).map(function (k) { return r.senders[k]; })
+        .filter(function (s) { return s.total >= BIG_MIN; })
+        .sort(function (a, b) { return b.total - a.total; }).slice(0, BIG_KEEP)
+        .map(function (s) { return { address: s.address, name: s.name, total: s.total, unread: s.unread, last90: s.last90, transN: s.transN, latest: s.latest && { id: s.latest.id, subject: s.latest.subject, received: s.latest.received.toISOString() } }; });
+      S.big = { at: Date.now(), scanned: r.scanned, senders: list };
+      G.local.set('is.big.v1', S.big);
+      S.bigBusy = false;
+      await gatherBigEvidence();
+      replan();
+    } catch (err) { S.bigBusy = false; showError(err); }
+    finally { S.bigBusy = false; }
+  }
+
+  // headers for the big senders we have not seen yet, so they get the same assessment as everyone else
+  async function gatherBigEvidence() {
+    var todo = bigCandidates().filter(function (s) { return !S.ctx.evidence[s.address] && s.latest; }).slice(0, EVIDENCE_PER_REFRESH);
+    var i = 0;
+    async function worker() {
+      while (i < todo.length) {
+        var s = todo[i++];
+        try { S.ctx.evidence[s.address] = E.readHeaders(await G.messageHeaders(s.latest.id)); } catch (e) { S.ctx.evidence[s.address] = {}; }
+      }
+    }
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    G.local.set('is.evidence.v1', S.ctx.evidence);
+  }
+
+  // The big senders worth a rule: not people, not already ruled, ordered by how live they are.
+  function bigCandidates() {
+    if (!S.big) return [];
+    return S.big.senders.filter(function (s) { return E.addressParts(s.address) && !E.ruleFor(S.rules, s.address); })
+      .filter(function (s) { return E.assessSender(s, S.ctx).kind !== 'people'; })
+      .sort(function (a, b) { return b.last90 - a.last90 || b.total - a.total; });
+  }
+
+  function bigRows() {
+    S.bigAssess = {};
+    var list = bigCandidates().slice(0, 60), names = {};
+    list.forEach(function (s) { names[s.name] = (names[s.name] || 0) + 1; });
+    return list.map(function (s) {
+      var as = E.assessSender(s, S.ctx), orders = s.transN * 2 >= s.total;
+      // receipts vs newsletters: what the subjects say wins (an address that mostly sends orders is Receipts even with an unsubscribe link)
+      if (orders && as.bucket !== 'R') as = { kind: 'suggest', bucket: 'R', why: s.transN + ' of ' + s.total + ' look like orders or deliveries' };
+      else if (as.kind !== 'suggest') as = { kind: 'suggest', bucket: 'N', why: 'no clear signal - volume alone' };
+      as = Object.assign({}, as, { why: plural(s.total, 'email') + ' · ' + s.unread + ' unread · ' + s.last90 + ' in the last 90 days · ' + as.why });
+      S.bigAssess[s.address] = as;
+      // two rows with the same name (Ocado marketing vs Ocado deliveries): show the address so they can be told apart
+      var shown = names[s.name] > 1 ? s.name + ' <' + s.address + '>' : s.name;
+      return senderRow(Object.assign({}, s, { name: shown, latest: s.latest || { subject: '' } }), { suggest: true, as: as, tag: plural(s.total, 'email') + (s.unread ? ', ' + s.unread + ' unread' : '') });
+    });
   }
 
   function suggestions() {
@@ -506,7 +566,7 @@
 
   function senderRow(s, opts) {
     opts = opts || {};
-    var a = s.address, rule = E.ruleFor(S.rules, a), as = S.assessments[a] || {};
+    var a = s.address, rule = E.ruleFor(S.rules, a), as = opts.as || S.assessments[a] || {};
     var acts = '';
     if (opts.suggest) {
       acts += '<button class="round yes" data-act="approve" title="Approve: always ' + esc(E.bucketName(as.bucket)) + '" aria-label="Approve">' + ICON.check + '</button>'
@@ -515,7 +575,7 @@
     acts += '<button class="round more" data-act="edit" title="Choose something else" aria-label="Choose a rule" aria-expanded="' + (S.editing === a) + '">' + ICON.more + '</button>';
     // suggestions: name, then folder + latest subject (the reason is the tooltip). Everything else: one line.
     var subject = esc(s.latest ? s.latest.subject : ''), tip = esc(a + (as.why ? ' - ' + as.why : ''));
-    var who = '<div class="who">' + esc(s.name) + '<span class="n">' + s.total + '</span></div>';
+    var who = '<div class="who">' + esc(s.name) + '<span class="n">' + (opts.tag ? esc(opts.tag) : s.total) + '</span></div>';
     var tag = opts.suggest ? pill(as.bucket) : (rule && (rule.bucket !== 'I' || rule.scope === 'domain') ? pill(rule.bucket) : '');
     var body = opts.suggest
       ? who + '<div class="what">' + tag + ' ' + subject + '</div>'
@@ -564,6 +624,15 @@
         html += section('suggest', 'Suggested rules', sug.length,
           '<p class="hint">Tick to approve, cross to keep that sender in the inbox. <button class="link" data-act="approve-all">Approve all</button></p>',
           sug.map(function (s) { return senderRow(s, { suggest: true }); }).join(''));
+      }
+      // 1b. big senders across the whole inbox
+      if (!S.focus) {
+        var stale = S.big && (Date.now() - S.big.at) > BIG_TTL_DAYS * 86400000;
+        var bigList = S.big ? bigRows() : [];
+        var bigHead = S.bigBusy ? '<p class="hint">Counting every email in the inbox... this takes a few minutes the first time.</p>'
+          : !S.big ? '<p class="hint">See who sends you the most, across the whole inbox, and set rules for them in one tick. <button class="link" data-act="big-scan">Find the big senders</button></p>'
+          : '<p class="hint">Counted ' + S.big.scanned.toLocaleString() + ' emails' + (stale ? ' over a week ago' : '') + '. <button class="link" data-act="big-scan">Count again</button></p>';
+        html += section('big', 'Big senders', S.big ? bigList.length : '', bigHead, bigList.join(''));
       }
       // 2. ready to file
       var byDest = {}, order = [];
@@ -642,7 +711,8 @@
       var idHolder = el.closest('[data-id]'), id = idHolder && idHolder.getAttribute('data-id');
       if (act === 'toggle') { var k = el.getAttribute('data-key'); S.open[k] = !S.open[k]; render(); }
       else if (act === 'toggle-dest') { var c = el.getAttribute('data-code'); var cur = S.openDest[c] !== undefined ? S.openDest[c] : S.rows.filter(function (r) { return r.dest !== 'I'; }).length <= 15; S.openDest[c] = !cur; render(); }
-      else if (act === 'approve') { setRule(address, S.assessments[address].bucket); }
+      else if (act === 'approve') { setRule(address, (S.assessments[address] || S.bigAssess[address]).bucket); }
+      else if (act === 'big-scan') { scanBigSenders(); }
       else if (act === 'reject') { setRule(address, 'I'); }
       else if (act === 'approve-all') { approveAll(); }
       else if (act === 'edit') { S.editing = S.editing === address ? null : address; render(); }

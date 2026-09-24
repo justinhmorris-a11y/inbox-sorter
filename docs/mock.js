@@ -98,6 +98,7 @@
       var msg = inbox.filter(function (x) { return x.id === m[1]; })[0];
       return { internetMessageHeaders: msg && unsubSenders[msg.from.emailAddress.address] ? headers.unsub : [] };
     }
+    if (/inbox\/messages/.test(url) && !/\$filter/.test(url)) return { value: inbox.filter(function (x) { return !moved[x.id]; }) };
     if (/inbox\/messages/.test(url)) {
       var ge = /ge (\S+Z)/.exec(url), lt = /lt (\S+Z)/.exec(url);
       return { value: inbox.filter(function (x) { return !moved[x.id] && x.receivedDateTime >= ge[1].replace('Z', '.000Z') && x.receivedDateTime < lt[1].replace('Z', '.000Z'); }) };

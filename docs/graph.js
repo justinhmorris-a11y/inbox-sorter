@@ -138,6 +138,27 @@
     return { scanned: scanned, to: to };
   }
 
+  /** Every inbox message counted by sender: { address: { address, name, total, unread, last90, transN, latest: { id, subject, received } } }.
+   *  isTrans(subject) says whether a subject looks like an order / receipt. Reads the whole inbox, 1,000 at a time. */
+  async function senderCounts(isTrans, onProgress) {
+    var url = '/me/mailFolders/inbox/messages?$select=id,from,receivedDateTime,isRead,subject&$top=1000';
+    var by = {}, n = 0, d90 = Date.now() - 90 * 86400000;
+    while (url) {
+      var page = await call(url);
+      (page.value || []).forEach(function (raw) {
+        var m = mapMessage(raw);
+        var s = by[m.from] || (by[m.from] = { address: m.from, name: m.fromName || m.from, total: 0, unread: 0, last90: 0, transN: 0, latest: null });
+        s.total++; if (!m.isRead) s.unread++; if (m.received > d90) s.last90++; if (isTrans && isTrans(m.subject)) s.transN++;
+        if (!s.latest || m.received > s.latest.received) s.latest = { id: m.id, subject: m.subject, received: m.received };
+        if (!s.name && m.fromName) s.name = m.fromName;
+      });
+      n += (page.value || []).length;
+      if (onProgress) onProgress(n);
+      url = page['@odata.nextLink'] || null;
+    }
+    return { scanned: n, senders: by };
+  }
+
   async function messageHeaders(id) {
     var m = await call('/me/messages/' + encodeURIComponent(id) + '?$select=internetMessageHeaders');
     return m.internetMessageHeaders || [];
@@ -207,7 +228,7 @@
 
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
-    initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo,
+    initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo, senderCounts: senderCounts,
     moveMessage: moveMessage, setRead: setRead, listFolders: listFolders, createFolder: createFolder,
     local: local, loadRules: loadRules, rulesInMailbox: rulesInMailbox, saveRules: saveRules
   };

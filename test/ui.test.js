@@ -130,6 +130,20 @@ const assert = require('assert');
   console.log('file this one: moved', oneMoves[0].id, 'to', oneMoves[0].to, 'while the pane showed Today');
 
   await one.close();
+  // big senders: count the whole inbox, list the busiest non-people without a rule, tick one
+  const bg = await open();
+  assert.ok(/Find the big senders/.test(await bg.textContent('#main')), 'offer to count');
+  await bg.click('[data-act="big-scan"]');
+  await bg.waitForFunction(() => /Counted \d+ emails/.test(document.getElementById('main').textContent), null, { timeout: 15000 });
+  const bgText = (await bg.textContent('#main')).replace(/\s+/g, ' ');
+  assert.ok(!/Ross|Andy Moore/.test(bgText.split('Ready to file')[0]), 'people are not listed as big senders');
+  const before = await bg.locator('.section [data-key="big"] ~ .row, .row[data-addr="donotreply@email.sportsdirect.com"]').count();
+  assert.ok(before >= 1, 'Sports Direct listed');
+  await bg.locator('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]').first().click();
+  assert.ok(/Sports Direct: Newsletters/.test(await bg.textContent('#toast')), 'rule set from the big list');
+  console.log('big senders: counted, listed, rule set from the list');
+  await bg.close();
+
   // safety net override: 'Payment declined' from Amazon Payments is kept even with a Receipts rule; 'File anyway' files just that one
   const fa = await open();
   await fa.click('[data-act="toggle"][data-key="stay"]');
