@@ -482,6 +482,8 @@
   // 'File Ocado now · 4 emails': apply just the open email's rule, leaving everything else for Tidy.
   function fileTheseButton() {
     var sel = S.selected, cr = cardRule(sel.address);
+    // options ticked but no destination chosen yet: say what is missing instead of showing nothing
+    if (!cr && (subjectOn(sel.address) || readFlag(sel.address))) return '<p class="hint">Not saved yet: choose where it goes (a folder above) and the rule is made.</p>';
     if (!cr || cr.bucket === 'I') return '';
     var rows = rowsForSelected(), dis = S.busy ? ' disabled' : '';
     var one = sel.itemId ? '<button class="btn file-these" data-act="file-one"' + dis + '>File this one</button>' : '';

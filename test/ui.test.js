@@ -86,6 +86,7 @@ const assert = require('assert');
   assert.ok(await sj.isDisabled('.card [data-act="subject"]'), 'subject box greyed until ticked');
   await sj.check('.card [data-act="subject-on"]');
   await sj.check('.card [data-act="read"]');
+  assert.ok(/Not saved yet: choose where it goes/.test(await sj.textContent('.card')), 'card says the rule is not saved until a destination is picked');
   await sj.selectOption('.card select[data-act="folder"]', 'F:DezRez');
   const sjCard = (await sj.textContent('.card')).replace(/\s+/g, ' ');
   assert.ok(/Your rule: "Demo booked" from this sender goes to DezRez, mark as read/.test(sjCard), 'card shows subject rule: ' + sjCard);
