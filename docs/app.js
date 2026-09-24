@@ -327,6 +327,7 @@
       var m = await G.messageInfo(id);
       var row = E.plan([m], E.buildSenders([m]), S.rules, S.ctx, { now: new Date() }).rows[0];
       S.busy = false;
+      if (row && row.group === 'kept' && row.wouldBe) row = Object.assign({}, row, { dest: row.wouldBe, markRead: !!(row.rule && row.rule.read && !m.isRead) });   // you pressed the button: you have seen it
       if (!row || row.dest === 'I') { replan(); toast(row && row.why ? 'Kept in the inbox: ' + row.why : 'Nothing to file for this email', null); return; }
       await tidy([row]);
     } catch (err) { S.busy = false; setProgress(null); showError(err); }

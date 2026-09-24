@@ -142,6 +142,14 @@ const assert = require('assert');
   await fa.waitForFunction(() => /Filed 1 email/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
   const faMoves = (await fa.evaluate(() => window.MockLog)).moves;
   assert.strictEqual(faMoves.length - faBefore, 1, 'exactly one email moved'); assert.strictEqual(faMoves[faMoves.length - 1].to, 'F-Receipts');
+  // and 'File this one' on the open email overrides the safety net the same way
+  await fa.evaluate(() => window.MockOpen('noreply@steampowered.com', 'Steam Support', 'Your Steam account: Access from new computer', new Date(), 'MOCK-16'));
+  await fa.waitForFunction(() => /Steam/.test(document.querySelector('.card .who').textContent), null, { timeout: 10000 });
+  await fa.click('.card [data-code="T"]');
+  await fa.click('.card [data-act="file-one"]');
+  await fa.waitForFunction(() => /Filed 1 email/.test(document.getElementById('toast').textContent), null, { timeout: 10000 });
+  const faOne = (await fa.evaluate(() => window.MockLog)).moves.slice(-1)[0];
+  assert.strictEqual(faOne.id, 'MOCK-16'); assert.strictEqual(faOne.to, 'F-Notifications', 'security-alert subject filed on request');
   console.log('file anyway: safety-net email filed to', faMoves[faMoves.length - 1].to, '| others untouched');
   await fa.close();
 
