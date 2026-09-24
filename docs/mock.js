@@ -57,7 +57,7 @@
   var headers = { unsub: [{ name: 'List-Unsubscribe', value: '<x>' }] };
   var unsubSenders = { 'donotreply@email.sportsdirect.com': 1, 'friendupdates@facebookmail.com': 1, 'amazon-offers@amazon.co.uk': 1, 'info-uk@epsa.com': 1, 'info@emails.golfbreaks.com': 1, 'newsletter@progressiveguitar.example': 1 };
   var folders = [{ id: 'F-inbox', displayName: 'Inbox' }, { id: 'F-audit', displayName: 'Audit' }, { id: 'F-dez', displayName: 'DezRez' }, { id: 'F-hipz', displayName: 'Hipz' }, { id: 'F-ski', displayName: 'Ski erg' }, { id: 'F-trips', displayName: 'Trips' }];
-  var moved = {};
+  var moved = {}, storeMsg = null;
   global.MockLog = { moves: [], created: [], reads: [] };
 
   global.MockGraph = {
@@ -72,6 +72,10 @@
 
   function route(method, url, body) {
     var m;
+    if (/\/me\/mailFolders\?includeHiddenFolders/.test(url)) return { value: folders.filter(function (f) { return f.displayName === 'Inbox Sorter (data)'; }) };
+    if (method === 'GET' && /F-Inbox Sorter \(data\)\/messages/.test(url)) return { value: storeMsg ? [storeMsg] : [] };
+    if (method === 'POST' && /F-Inbox Sorter \(data\)\/messages$/.test(url)) { storeMsg = { id: 'STORE-1', subject: body.subject, body: body.body }; global.MockLog.storeWrites = (global.MockLog.storeWrites || 0) + 1; return storeMsg; }
+    if (method === 'PATCH' && /\/me\/messages\/STORE-1$/.test(url)) { storeMsg.body = body.body; global.MockLog.storeWrites = (global.MockLog.storeWrites || 0) + 1; return null; }
     if (method === 'POST' && /\/me\/mailFolders$/.test(url)) { var f = { id: 'F-' + body.displayName, displayName: body.displayName }; folders.push(f); global.MockLog.created.push(body.displayName); return f; }
     if (method === 'PATCH' && (m = /\/me\/messages\/([^/?]+)$/.exec(url))) {
       var target = inbox.filter(function (x) { return x.id === m[1]; })[0];

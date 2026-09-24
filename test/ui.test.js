@@ -11,7 +11,7 @@ const assert = require('assert');
   await new Promise(r => server.listen(8123, r));
   const browser = await chromium.launch({ executablePath: process.env.PW_CHROME || undefined /* set PW_CHROME only if Playwright's own Chromium is not installed */ });
   const shots = path.join(__dirname, 'shots'); fs.mkdirSync(shots, { recursive: true });
-  const errors = [];
+  const errors = []; let log0Created;
   async function open(theme) {
     const page = await browser.newPage({ viewport: { width: 350, height: 900 }, deviceScaleFactor: 2 });
     page.on('pageerror', e => errors.push('pageerror: ' + e.message));
@@ -27,6 +27,9 @@ const assert = require('assert');
   console.log('tidy   :', await text('#tidy'));
   await page.screenshot({ path: path.join(shots, '1-start.png') });
 
+  // the rule store: first run creates the hidden folder + draft message; edits are written there
+  await page.waitForFunction(() => (window.MockLog.storeWrites || 0) >= 1, null, { timeout: 10000 });
+  assert.ok(log0Created = (await page.evaluate(() => window.MockLog.created)).includes('Inbox Sorter (data)'), 'hidden data folder created');
   // seeded rules (golfbreaks delete, epsa junk) should already be filing; nothing else moves
   let log = await page.evaluate(() => window.MockLog);
   assert.strictEqual(log.moves.length, 0, 'nothing moved just by opening');
@@ -35,6 +38,8 @@ const assert = require('assert');
   await page.click('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]');
   await page.click('.row[data-addr="friendupdates@facebookmail.com"] [data-act="reject"]');
   console.log('after approve/reject:', await text('#summary'));
+  await page.waitForFunction(() => (window.MockLog.storeWrites || 0) >= 2, null, { timeout: 10000 });
+  console.log('rule store writes so far:', await page.evaluate(() => window.MockLog.storeWrites));
   // open the editor on Amazon offers and choose Delete for the whole domain? -> no: sender only, choose Delete
   await page.click('.row[data-addr="amazon-offers@amazon.co.uk"] [data-act="edit"]');
   await page.waitForSelector('.editor[data-addr="amazon-offers@amazon.co.uk"]');

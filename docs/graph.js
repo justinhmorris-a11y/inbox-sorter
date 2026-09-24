@@ -58,7 +58,7 @@
     for (var attempt = 1; ; attempt++) {
       var token = await getToken();
       var headers = { Authorization: 'Bearer ' + token };
-      if (options.immutable !== false) headers.Prefer = 'IdType="ImmutableId"';
+      if (options.immutable !== false) headers.Prefer = 'IdType="ImmutableId"' + (options.bodyText ? ', outlook.body-content-type="text"' : '');
       if (options.body) headers['Content-Type'] = 'application/json';
       var res;
       try { res = await fetch(url, { method: method, headers: headers, body: options.body ? JSON.stringify(options.body) : undefined }); }
@@ -205,31 +205,81 @@
     remove: function (key) { try { global.localStorage.removeItem(key); } catch (e) { /* cache only */ } }
   };
 
-  function loadRules() {
+  // ---- the rule store ---------------------------------------------------------------------
+  // Rules live in one draft message inside a hidden folder of the mailbox: room for tens of thousands
+  // of rules, roams with the mailbox, never shown in Outlook. Outlook's 32 KB roaming setting (the old
+  // store) and a localStorage backup remain as fallbacks and are migrated on first load.
+  var STORE_FOLDER = 'Inbox Sorter (data)', STORE_SUBJECT = 'Inbox Sorter rules - do not delete';
+  var store = { folderId: null, messageId: null };
+
+  async function storeFolderId() {
+    if (store.folderId) return store.folderId;
+    var q = await call('/me/mailFolders?includeHiddenFolders=true&$filter=' + encodeURIComponent("displayName eq '" + STORE_FOLDER + "'") + '&$select=id');
+    var f = (q.value || [])[0];
+    if (!f) f = await call('/me/mailFolders', { method: 'POST', body: { displayName: STORE_FOLDER, isHidden: true } });
+    store.folderId = f.id;
+    return f.id;
+  }
+
+  async function storeMessage() {
+    var fid = await storeFolderId();
+    var q = await call('/me/mailFolders/' + encodeURIComponent(fid) + '/messages?$filter=' + encodeURIComponent("subject eq '" + STORE_SUBJECT + "'") + '&$select=id,body&$top=2', { bodyText: true });
+    var m = (q.value || [])[0];
+    if (m) store.messageId = m.id;
+    return m || null;
+  }
+
+  async function loadRulesRemote() {
+    var m = await storeMessage();
+    if (!m || !m.body || !m.body.content) return null;
+    var text = String(m.body.content).replace(/<[^>]+>/g, '').trim();   // text body; strip tags if Outlook wrapped it
+    var start = text.indexOf('{');
+    return start < 0 ? null : JSON.parse(text.slice(start, text.lastIndexOf('}') + 1));
+  }
+
+  async function saveRulesRemote(text) {
+    if (!store.messageId) await storeMessage();
+    var body = { contentType: 'text', content: text };
+    if (store.messageId) { await call('/me/messages/' + encodeURIComponent(store.messageId), { method: 'PATCH', body: { body: body } }); return; }
+    var fid = await storeFolderId();
+    var m = await call('/me/mailFolders/' + encodeURIComponent(fid) + '/messages', { method: 'POST', body: { subject: STORE_SUBJECT, body: body, isRead: true } });
+    store.messageId = m.id;
+  }
+
+  function loadRulesLegacy() {
     var raw = null;
     try { raw = Office.context.roamingSettings.get('rules'); } catch (e) { raw = null; }
     if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch (e2) { raw = null; } }
-    if (!raw) raw = local.get('is.rules.backup');
     return raw;
   }
 
-  function rulesInMailbox() { try { return !!Office.context.roamingSettings.get('rules'); } catch (e) { return false; } }
+  /** The rules: from the mailbox store, else the old roaming setting, else the local backup. { rules, where } */
+  async function loadRules() {
+    try { var r = await loadRulesRemote(); if (r) return { rules: r, where: 'store' }; } catch (e) { console.warn('rule store unreadable, using fallbacks', e); }
+    var legacy = loadRulesLegacy();
+    if (legacy) return { rules: legacy, where: 'roaming' };
+    var backup = local.get('is.rules.backup');
+    return { rules: backup, where: backup ? 'backup' : 'none' };
+  }
 
+  var saving = null, pending = null;
+  /** Save to the mailbox store (one write at a time; a burst of edits collapses into the last). Resolves { ok, size }. */
   function saveRules(rules) {
     var text = JSON.stringify(rules);
     local.set('is.rules.backup', rules);
-    return new Promise(function (resolve) {
-      try {
-        Office.context.roamingSettings.set('rules', text);
-        Office.context.roamingSettings.saveAsync(function (r) { resolve({ ok: r && r.status === 'succeeded', size: text.length }); });
-      } catch (e) { resolve({ ok: false, size: text.length }); }
-    });
+    if (global.SORTER_MOCK) { try { Office.context.roamingSettings.set('rules', text); } catch (e) { /* mock */ } }
+    pending = text;
+    if (!saving) saving = (async function loop() {
+      while (pending !== null) { var t = pending; pending = null; try { await saveRulesRemote(t); } catch (e) { console.error('rule store save failed', e); saving = null; return { ok: false, size: t.length }; } }
+      saving = null; return { ok: true, size: text.length };
+    })();
+    return saving.then(function (r) { return { ok: r.ok, size: text.length }; });
   }
 
   global.SorterGraph = {
     SetupError: SetupError, GraphError: GraphError,
     initAuth: initAuth, me: me, listInbox: listInbox, sentRecipients: sentRecipients, messageHeaders: messageHeaders, messageInfo: messageInfo, senderCounts: senderCounts,
     moveMessage: moveMessage, setRead: setRead, listFolders: listFolders, createFolder: createFolder,
-    local: local, loadRules: loadRules, rulesInMailbox: rulesInMailbox, saveRules: saveRules
+    local: local, loadRules: loadRules, saveRules: saveRules
   };
 })(typeof self !== 'undefined' ? self : this);

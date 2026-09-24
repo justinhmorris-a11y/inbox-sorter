@@ -62,8 +62,9 @@
     wire();
     showLoading('Connecting to your mailbox...');
     await G.initAuth();
-    S.rules = E.normaliseRules(G.loadRules() || seedRules());
-    if (!G.rulesInMailbox()) G.saveRules(S.rules);   // only a local backup (or seeds) so far: store them in the mailbox
+    var loaded = await G.loadRules();
+    S.rules = E.normaliseRules(loaded.rules || seedRules());
+    if (loaded.where !== 'store') G.saveRules(S.rules);   // first run, or rules still in the old 32 KB setting / local backup: move them into the mailbox store
     pruneKeep();
     S.me = await G.me();
     S.ctx.myDomains = S.me.domains;
@@ -234,7 +235,7 @@
 
   function afterRuleChange(message) {
     G.saveRules(S.rules).then(function (r) {
-      if (r.size > 30000) toast('Your rule list is getting large for Outlook to store - tell Claude.', null);
+      if (!r.ok) toast('Could not save your rules to the mailbox just now - they are kept on this PC and will be saved on the next change.', null);
     });
     // the open email got a rule but sits outside the dates shown: widen the range so Tidy can reach it straight away
     var sel = S.selected, when = sel && sel.received, widened = false;
