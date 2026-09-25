@@ -98,7 +98,7 @@ const assert = require('assert');
   assert.ok(/Not saved yet: choose where it goes/.test(await sj.textContent('.card')), 'card says the rule is not saved until a destination is picked');
   await sj.selectOption('.card select[data-act="folder"]', 'F:DezRez');
   const sjCard = (await sj.textContent('.card')).replace(/\s+/g, ' ');
-  assert.ok(/Your rule: "Demo booked" from this sender goes to DezRez, mark as read/.test(sjCard), 'card shows subject rule: ' + sjCard);
+  assert.ok(/Your rule: "Demo booked" from this sender goes to DezRez, mark as read/.test(sjCard) && /Rule for this sender/.test(sjCard), 'card shows subject rule: ' + sjCard);
   assert.strictEqual((await sj.textContent('#tidy')).trim(), 'Tidy now · file 5 emails', 'the two Demo booked mails join the 3 seeded ones');
   await sj.click('[data-act="toggle"][data-key="stay"]');
   const sjMain = (await sj.textContent('#main')).replace(/\s+/g, ' ');
@@ -178,7 +178,7 @@ const assert = require('assert');
   const before = await bg.locator('.section [data-key="big"] ~ .row, .row[data-addr="donotreply@email.sportsdirect.com"]').count();
   assert.ok(before >= 1, 'Sports Direct listed');
   await bg.locator('.row[data-addr="donotreply@email.sportsdirect.com"] [data-act="approve"]').first().click();
-  assert.ok(/Sports Direct: Newsletters/.test(await bg.textContent('#toast')), 'rule set from the big list');
+  assert.ok(/Rule saved: Sports Direct → Newsletters/.test(await bg.textContent('#toast')), 'rule set from the big list');
   console.log('big senders: counted, listed, rule set from the list');
   await bg.close();
 

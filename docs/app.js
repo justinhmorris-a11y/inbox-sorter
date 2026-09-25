@@ -214,7 +214,7 @@
       S.rules.subjects = (S.rules.subjects || []).filter(function (r) { return !(r.from === address && r.has.toLowerCase() === has.toLowerCase()); });
       S.rules.subjects.push({ from: address, has: has, code: code });
       var sb = E.splitCode(code).bucket;
-      afterRuleChange(quiet ? null : '"' + has + '" from ' + senderName(address) + ': ' + (sb === 'I' ? 'keep in inbox' : sb === 'D' ? 'delete' : E.bucketName(sb)) + (E.splitCode(code).read ? ', mark as read' : ''));
+      afterRuleChange(quiet ? null : 'Rule saved: "' + has + '" from ' + senderName(address) + ' → ' + (sb === 'I' ? 'keep in inbox' : sb === 'D' ? 'Deleted Items' : sb === 'J' ? 'Junk' : E.bucketName(sb)) + (E.splitCode(code).read ? ', mark as read' : ''));
       return;
     }
     var existing = E.ruleFor(S.rules, address);
@@ -225,7 +225,7 @@
     else S.rules.senders[address] = code;
     var b = E.splitCode(code).bucket;
     var label = (b === 'I' ? 'keep in inbox' : b === 'D' ? 'delete' : E.bucketName(b)) + (E.splitCode(code).read ? ', mark as read' : '') + (E.splitCode(code).arrival ? ', at arrival' : '');
-    afterRuleChange(quiet ? null : senderName(address) + ': ' + label);
+    afterRuleChange(quiet ? null : 'Rule saved: ' + senderName(address) + ' → ' + (b === 'D' ? 'Deleted Items' : b === 'J' ? 'Junk' : label));
     if (!quiet && b !== 'I') offerBacklog(address, b);
   }
 
@@ -283,7 +283,7 @@
     if (!sweepPlan) return '<p class="hint">Your rules only touch the dates shown. <button class="link" data-act="sweep-plan">Sweep the whole inbox</button> to see what they would file from all of it.</p>';
     var codes = Object.keys(sweepPlan.by).sort(function (a, b) { return sweepPlan.by[b] - sweepPlan.by[a]; });
     var buttons = codes.map(function (k) { return '<button class="link" data-act="sweep-run" data-code="' + esc(k) + '">' + esc(E.bucketName(k)) + ' ' + sweepPlan.by[k].toLocaleString() + '</button>'; }).join(' ');
-    return '<p class="hint">Of ' + sweepPlan.scanned.toLocaleString() + ' emails in the inbox your rules would file <b>' + sweepPlan.rows.length.toLocaleString() + '</b>. Recent mail that looks like it needs you stays. File: '
+    return '<p class="hint">Of ' + sweepPlan.scanned.toLocaleString() + ' emails in the inbox your rules would file <b>' + sweepPlan.rows.length.toLocaleString() + '</b>. Recent mail that looks like it needs you stays. Junk older than 30 days goes to Deleted Items instead (Outlook empties Junk after 30 days). File: '
       + buttons + (codes.length > 1 ? ' <button class="link" data-act="sweep-run">All ' + sweepPlan.rows.length.toLocaleString() + '</button>' : '') + ' <button class="link" data-act="sweep-cancel">Not now</button></p>';
   }
 
@@ -542,6 +542,8 @@
     if (!rows.length || S.busy) return;
     S.busy = true; $('tidy').disabled = true; $('undo').disabled = true;
     try {
+      var cutoff = Date.now() - 30 * 86400000;
+      rows = rows.map(function (r) { return r.dest === 'J' && r.msg.received < cutoff ? Object.assign({}, r, { dest: 'D', why: r.why + ' (older than 30 days, so Deleted Items rather than Junk)' }) : r; });
       var ids = {}, codes = rows.map(function (r) { return r.dest; }).filter(function (c, idx, a) { return a.indexOf(c) === idx; });
       for (var c = 0; c < codes.length; c++) ids[codes[c]] = await folderIdFor(codes[c]);
       var result = await runMoves(rows.map(function (r) { return { id: r.msg.id, to: ids[r.dest] }; }), 'Filing');
@@ -658,7 +660,7 @@
     var extras = (options ? '<div class="line"><span>or folder</span><select data-act="folder"><option value="">Choose...</option>' + options + '</select></div>' : '') + subjectLine + domainLine + readLine + arrivalLine;
     var showExtras = !inCard || S.cardMore || !!folderCode || usesDomain(address) || readFlag(address) || subjOn || arrivalFlag(address);
     return '<div class="editor" data-addr="' + esc(address) + '">'
-      + (inCard ? (has.trim() ? '<p class="label">Mail from this sender with "' + esc(has.trim()) + '" in the subject goes to:</p>' : '') : '<p class="label">Mail from ' + esc(address) + ' always goes to:</p>')
+      + (inCard ? '<p class="label">' + (has.trim() ? 'Rule for this sender: mail with "' + esc(has.trim()) + '" in the subject always goes to' : 'Rule for this sender: mail from them always goes to') + ' (the buttons below file one email only):</p>' : '<p class="label">Rule: mail from ' + esc(address) + ' always goes to:</p>')
       + '<div class="chips">' + chips + '</div>'
       + (showExtras ? extras : '')
       + '<div class="foot">' + (rule ? '<button class="link" data-act="clear">Remove rule</button>' : '<span></span>')
